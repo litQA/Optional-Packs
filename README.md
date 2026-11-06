@@ -11,11 +11,10 @@ to the workspace build event.
 | Loader | Generator names |
 | --- | --- |
 | Forge | `forge-1.16.5`, `forge-1.17.1`, `forge-1.18.2`, `forge-1.19.2`, `forge-1.19.4`, `forge-1.20.1` |
-| NeoForge | `neoforge-1.20.4`, `neoforge-1.20.6`, `neoforge-1.21.1`, `neoforge-1.21.4`, `neoforge-1.21.8` |
-| Fabric | `fabric-1.21.8` |
+| NeoForge | `neoforge-1.20.1`, `neoforge-1.20.4`, `neoforge-1.20.6`, `neoforge-1.21.1`, `neoforge-1.21.4`, `neoforge-1.21.8` |
 
-Forge 1.16.5 is handled separately because it predates `AddPackFindersEvent`. See
-[MIGRATION-REPORT.md](MIGRATION-REPORT.md) for the exact limitation.
+Fabric support was removed from this 2026.1 branch. The NeoForge 1.20.1 generator uses the same
+`net.minecraftforge` API surface as Forge 1.20.1, so it shares the Forge hook.
 
 ## How it works
 
@@ -30,11 +29,14 @@ regenerated the workspace base and before Gradle starts.
 5. It writes a loader-specific hook and a shared reflection runtime to `.optional_packs/generated/java/`.
 6. It appends a managed block to the generated `build.gradle` so the generated sources and resources are compiled and
    included in the mod jar, while the source drop folders are excluded from the jar.
-7. For Fabric only, it also derives the directory layouts required by Fabric's built-in pack API.
 
-Forge and NeoForge use `AddPackFindersEvent` with a `FolderRepositorySource` pointing at a temporary directory that
-contains the bundled zips. Fabric uses `ResourceManagerHelper#registerBuiltinResourcePack` with
-`ResourcePackActivationType.NORMAL`, which is optional and disabled by default.
+Forge 1.17.1 through 1.20.1, NeoForge 1.20.1, and NeoForge 1.20.4 through 1.21.8 use `AddPackFindersEvent`. The
+generated source selects a `FolderRepositorySource` constructor that matches the target version: the older
+`(File, PackSource)` form for 1.17.1 through 1.19.2, and the newer `Path`/`PackType` form for 1.19.4 and later.
+
+Forge 1.16.5 predates `AddPackFindersEvent`. Its hook adds an `IPackFinder` to the client
+`ResourcePackRepository` and creates `ResourcePackInfo` entries backed by `FilePack` objects for the normalized
+archives. A game-directory copy is retained as a fallback when the old reflection path is unavailable.
 
 The generated pack identifiers use the normalized file names. The source zip files are never renamed, rewritten, or
 unpacked in place.
@@ -85,9 +87,6 @@ The generated mod receives the normalized archives in its jar:
 optional_packs/resourcepacks/<normalized>.zip
 optional_packs/datapacks/<normalized>.zip
 ```
-
-Fabric workspaces additionally contain derived directories under `resourcepacks/r_<normalized>/` and
-`resourcepacks/d_<normalized>/`, because Fabric's built-in pack API consumes directories rather than zip files.
 
 ## Building this plugin
 

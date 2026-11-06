@@ -30,12 +30,12 @@ public final class OptionalPacksBuildHandler {
             "forge-1.19.2",
             "forge-1.19.4",
             "forge-1.20.1",
+            "neoforge-1.20.1",
             "neoforge-1.20.4",
             "neoforge-1.20.6",
             "neoforge-1.21.1",
             "neoforge-1.21.4",
-            "neoforge-1.21.8",
-            "fabric-1.21.8");
+            "neoforge-1.21.8");
 
     private static final String RESOURCE_FOLDER = "resourcepacks";
     private static final String DATA_FOLDER = "datapacks";
@@ -66,11 +66,6 @@ public final class OptionalPacksBuildHandler {
 
         List<NormalizedPack> resourcePacks = copyPacks(resourceSource, generatedResourcePacks);
         List<NormalizedPack> dataPacks = copyPacks(dataSource, generatedDataPacks);
-
-        if (context.target() == BuildContext.Target.FABRIC) {
-            FabricPackExtractor.extract(generatedResources, resourcePacks, "r_");
-            FabricPackExtractor.extract(generatedResources, dataPacks, "d_");
-        }
 
         writeManifest(generatedResources, resourcePacks, dataPacks);
         GeneratedSourceFactory.write(context, resourcePacks, dataPacks);
@@ -111,13 +106,18 @@ public final class OptionalPacksBuildHandler {
         if ("forge-1.16.5".equals(generatorName)) {
             return BuildContext.Target.FORGE_1165;
         }
+        // The NeoForge 1.20.1 generator is the Forge 1.20.1 generator with NeoForge branding and uses the same
+        // net.minecraftforge API surface.
+        if ("neoforge-1.20.1".equals(generatorName)) {
+            return BuildContext.Target.FORGE;
+        }
         if (generatorName != null && generatorName.startsWith("forge-")) {
             return BuildContext.Target.FORGE;
         }
         if (generatorName != null && generatorName.startsWith("neoforge-")) {
             return BuildContext.Target.NEOFORGE;
         }
-        return BuildContext.Target.FABRIC;
+        throw new IllegalArgumentException("Unsupported generator: " + generatorName);
     }
 
     private static List<NormalizedPack> copyPacks(Path sourceDirectory, Path destinationDirectory) throws IOException {

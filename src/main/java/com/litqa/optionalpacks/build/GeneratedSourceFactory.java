@@ -15,6 +15,7 @@ public final class GeneratedSourceFactory {
             package @@PACKAGE@@.optionalpacks;
 
             import java.io.BufferedReader;
+            import java.io.File;
             import java.io.IOException;
             import java.io.InputStream;
             import java.io.InputStreamReader;
@@ -24,6 +25,7 @@ public final class GeneratedSourceFactory {
             import java.lang.reflect.Method;
             import java.lang.reflect.Proxy;
             import java.nio.charset.StandardCharsets;
+            import java.nio.file.DirectoryStream;
             import java.nio.file.Files;
             import java.nio.file.Path;
             import java.nio.file.Paths;
@@ -32,7 +34,7 @@ public final class GeneratedSourceFactory {
             import java.util.Collections;
             import java.util.List;
             import java.util.Locale;
-            import java.util.Optional;
+            import java.util.function.Supplier;
             import java.util.logging.Level;
             import java.util.logging.Logger;
 
@@ -40,8 +42,7 @@ public final class GeneratedSourceFactory {
              * Loader independent runtime for optional pack discovery.
              *
              * <p>Forge and NeoForge receive a temporary directory containing the bundled zip files and register it
-             * through the loader pack repository. Fabric's built-in pack API consumes directories, so the build stage
-             * also prepares derived directory trees for Fabric workspaces.</p>
+             * through the loader pack repository. Forge 1.16.5 uses the older client resource pack finder API.</p>
              */
             public final class OptionalPacksRuntime {
 
@@ -135,64 +136,194 @@ public final class GeneratedSourceFactory {
                 }
 
                 /**
-                 * Registers Fabric built-in packs. Fabric's API reads pack directories under
-                 * {@code resourcepacks/<id path>} rather than zip files.
-                 *
-                 * @param modId workspace mod id
+                 * Registers the bundled resource packs with the Forge 1.16.5 client repository. The old API uses
+                 * ResourcePackInfo objects and a pack finder instead of the modern FolderRepositorySource.
                  */
-                public static void registerFabricPacks(String modId) {
+                public static void registerLegacyResourcePacks() {
+                    boolean registered = false;
                     try {
-                        Class<?> loaderClass = load("net.fabricmc.loader.api.FabricLoader");
-                        Class<?> helperClass = load("net.fabricmc.fabric.api.resource.ResourceManagerHelper");
-                        Class<?> locationClass = load("net.minecraft.resources.ResourceLocation");
-                        Class<?> componentClass = load("net.minecraft.network.chat.Component");
-                        Class<?> activationClass = load("net.fabricmc.fabric.api.resource.ResourcePackActivationType");
-                        if (loaderClass == null || helperClass == null || locationClass == null
-                                || componentClass == null || activationClass == null) {
-                            LOG.warning("Optional Packs Fabric API or Minecraft classes are unavailable");
-                            return;
-                        }
-                        Object loader = loaderClass.getMethod("getInstance").invoke(null);
-                        Object containerOptional = loaderClass.getMethod("getModContainer", String.class)
-                                .invoke(loader, modId);
-                        Object container = containerOptional instanceof Optional
-                                ? ((Optional<?>) containerOptional).orElse(null)
-                                : containerOptional;
-                        if (container == null) {
-                            LOG.warning("Optional Packs could not find the Fabric mod container for " + modId);
-                            return;
-                        }
-                        Object activation = staticField(activationClass, "NORMAL");
-                        Method register = findFabricRegister(helperClass);
-                        if (activation == null || register == null) {
-                            LOG.warning("Optional Packs Fabric registration API is unavailable");
-                            return;
-                        }
-                        for (String[] entry : readManifest()) {
-                            boolean resource = "resourcepack".equals(entry[0]);
-                            if (!resource && !"datapack".equals(entry[0])) {
-                                continue;
-                            }
-                            String path = (resource ? "r_" : "d_") + entry[1];
-                            try {
-                                Object location = createResourceLocation(locationClass, "optional_packs", path);
-                                Object displayName = createComponent(componentClass, entry[1]);
-                                if (location == null || displayName == null) {
-                                    LOG.warning("Optional Packs could not create Fabric metadata for " + entry[1]);
-                                    continue;
+                        registered = tryRegisterLegacyPackFinder();
+                    } catch (Throwable throwable) {
+                        LOG.log(Level.WARNING, "Optional Packs legacy pack finder registration failed", throwable);
+                    }
+                    if (!registered) {
+                        copyToGameDirectory();
+                    }
+                    reloadResourcePacks();
+                }
+
+                private static boolean tryRegisterLegacyPackFinder() throws Exception {
+                    Class<?> minecraftClass = load("net.minecraft.client.Minecraft");
+                    if (minecraftClass == null || load("net.minecraft.resources.FilePack") == null
+                            || load("net.minecraft.resources.ResourcePackInfo") == null) {
+                        return false;
+                    }
+                    Object minecraft = minecraftClass.getMethod("getInstance").invoke(null);
+                    if (minecraft == null) {
+                        return false;
+                    }
+                    Object repository = invokeNoArgs(minecraft, "getResourcePackRepository");
+                    if (repository == null) {
+                        return false;
+                    }
+                    Method addPackFinder = findMethod(repository.getClass(), "addPackFinder", 1);
+                    if (addPackFinder == null) {
+                        return false;
+                    }
+                    final Path directory = runtimeDirectory(true);
+                    if (directory == null) {
+                        return false;
+                    }
+                    Class<?> finderType = addPackFinder.getParameterTypes()[0];
+                    Object finder = Proxy.newProxyInstance(finderType.getClassLoader(),
+                            new Class<?>[]{finderType}, new InvocationHandler() {
+                                @Override
+                                public Object invoke(Object proxy, Method method, Object[] arguments) {
+                                    if (arguments != null && arguments.length == 2) {
+                                        registerLegacyPacks(directory, arguments[0], arguments[1]);
+                                        return null;
+                                    }
+                                    return defaultProxyValue(proxy, method, arguments);
                                 }
-                                Object registered = register.invoke(null, location, container, displayName, activation);
-                                if (Boolean.FALSE.equals(registered)) {
-                                    LOG.warning("Optional Packs Fabric pack registration returned false for " + path);
+                            });
+                    addPackFinder.invoke(repository, finder);
+                    return true;
+                }
+
+                private static void registerLegacyPacks(Path directory, Object consumer, Object infoFactory) {
+                    try {
+                        Class<?> filePackClass = load("net.minecraft.resources.FilePack");
+                        Class<?> infoClass = load("net.minecraft.resources.ResourcePackInfo");
+                        Class<?> decoratorClass = load("net.minecraft.resources.IPackNameDecorator");
+                        Class<?> priorityClass = load("net.minecraft.resources.ResourcePackInfo$Priority");
+                        if (filePackClass == null || infoClass == null || decoratorClass == null
+                                || priorityClass == null) {
+                            LOG.warning("Optional Packs legacy resource pack classes are unavailable");
+                            return;
+                        }
+                        Object decorator = staticField(decoratorClass, "BUILT_IN");
+                        Object priority = staticField(priorityClass, "TOP");
+                        Method create = findMethod(infoClass, "create", 6);
+                        if (decorator == null || priority == null || create == null) {
+                            LOG.warning("Optional Packs legacy ResourcePackInfo API is unavailable");
+                            return;
+                        }
+                        Method accept = findMethod(consumer.getClass(), "accept", 1);
+                        if (accept == null) {
+                            return;
+                        }
+                        try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory, "*.zip")) {
+                            for (Path archive : stream) {
+                                try {
+                                    String fileName = archive.getFileName().toString();
+                                    String id = "optional_packs_" + fileName.substring(0,
+                                            fileName.length() - ".zip".length());
+                                    Object filePack = createLegacyFilePack(filePackClass, archive.toFile(), id);
+                                    if (filePack == null) {
+                                        continue;
+                                    }
+                                    Object supplier = createLegacySupplier(filePack);
+                                    Object info = createLegacyPackInfo(create, id, supplier, infoFactory, priority,
+                                            decorator);
+                                    if (info != null) {
+                                        accept.invoke(consumer, info);
+                                    }
+                                } catch (Throwable throwable) {
+                                    LOG.log(Level.WARNING,
+                                            "Optional Packs legacy pack registration failed for " + archive, throwable);
                                 }
-                            } catch (Throwable throwable) {
-                                LOG.log(Level.WARNING, "Optional Packs Fabric pack registration failed for " + path,
-                                        throwable);
                             }
                         }
                     } catch (Throwable throwable) {
-                        LOG.log(Level.WARNING, "Optional Packs Fabric registration failed", throwable);
+                        LOG.log(Level.WARNING, "Optional Packs legacy pack registration failed", throwable);
                     }
+                }
+
+                private static Object createLegacyFilePack(Class<?> filePackClass, File file, String id) {
+                    for (Constructor<?> constructor : filePackClass.getDeclaredConstructors()) {
+                        Class<?>[] parameterTypes = constructor.getParameterTypes();
+                        Object[] arguments = new Object[parameterTypes.length];
+                        boolean usable = true;
+                        for (int index = 0; index < parameterTypes.length; index++) {
+                            Class<?> parameterType = parameterTypes[index];
+                            if (parameterType.isInstance(file)) {
+                                arguments[index] = file;
+                            } else if (parameterType == boolean.class) {
+                                arguments[index] = Boolean.FALSE;
+                            } else if (parameterType == String.class) {
+                                arguments[index] = id;
+                            } else {
+                                usable = false;
+                                break;
+                            }
+                        }
+                        if (usable) {
+                            try {
+                                constructor.setAccessible(true);
+                                return constructor.newInstance(arguments);
+                            } catch (Throwable throwable) {
+                                LOG.log(Level.FINE, "Optional Packs FilePack constructor failed", throwable);
+                            }
+                        }
+                    }
+                    return null;
+                }
+
+                private static Object createLegacySupplier(final Object pack) {
+                    return Proxy.newProxyInstance(Supplier.class.getClassLoader(),
+                            new Class<?>[]{Supplier.class}, new InvocationHandler() {
+                                @Override
+                                public Object invoke(Object proxy, Method method, Object[] arguments) {
+                                    if ("get".equals(method.getName())) {
+                                        return pack;
+                                    }
+                                    return defaultProxyValue(proxy, method, arguments);
+                                }
+                            });
+                }
+
+                private static Object createLegacyPackInfo(Method create, String id, Object supplier, Object factory,
+                                                           Object priority, Object decorator) {
+                    Class<?>[] parameterTypes = create.getParameterTypes();
+                    Object[] arguments = new Object[parameterTypes.length];
+                    for (int index = 0; index < parameterTypes.length; index++) {
+                        Class<?> parameterType = parameterTypes[index];
+                        if (parameterType == String.class) {
+                            arguments[index] = id;
+                        } else if (parameterType == boolean.class) {
+                            arguments[index] = Boolean.FALSE;
+                        } else if (parameterType.isInstance(supplier)) {
+                            arguments[index] = supplier;
+                        } else if (parameterType.isInstance(factory)) {
+                            arguments[index] = factory;
+                        } else if (parameterType.isInstance(priority)) {
+                            arguments[index] = priority;
+                        } else if (parameterType.isInstance(decorator)) {
+                            arguments[index] = decorator;
+                        } else {
+                            return null;
+                        }
+                    }
+                    try {
+                        return create.invoke(null, arguments);
+                    } catch (Throwable throwable) {
+                        LOG.log(Level.WARNING, "Optional Packs ResourcePackInfo.create failed", throwable);
+                        return null;
+                    }
+                }
+
+                private static Object defaultProxyValue(Object proxy, Method method, Object[] arguments) {
+                    String name = method.getName();
+                    if ("toString".equals(name)) {
+                        return "optional_packs_proxy";
+                    }
+                    if ("hashCode".equals(name)) {
+                        return System.identityHashCode(proxy);
+                    }
+                    if ("equals".equals(name)) {
+                        return arguments != null && arguments.length == 1 && proxy == arguments[0];
+                    }
+                    return null;
                 }
 
                 private static boolean isClientPackType(Object packType) {
@@ -289,6 +420,8 @@ public final class GeneratedSourceFactory {
                             Class<?> parameterType = parameterTypes[index];
                             if (parameterType.isInstance(directory)) {
                                 arguments[index] = directory;
+                            } else if (parameterType.isInstance(directory.toFile())) {
+                                arguments[index] = directory.toFile();
                             } else if (parameterType.isInstance(packType)) {
                                 arguments[index] = packType;
                             } else if (builtIn != null && parameterType.isInstance(builtIn)) {
@@ -380,60 +513,30 @@ public final class GeneratedSourceFactory {
                     return false;
                 }
 
-                private static Method findFabricRegister(Class<?> helperClass) {
-                    Method fallback = null;
-                    for (Method method : helperClass.getMethods()) {
-                        if (!"registerBuiltinResourcePack".equals(method.getName())
-                                || method.getParameterCount() != 4) {
-                            continue;
-                        }
-                        if (fallback == null) {
-                            fallback = method;
-                        }
-                        if (method.getParameterTypes()[2].getName().contains("Component")) {
+                private static Method findMethod(Class<?> type, String name, int parameterCount) {
+                    for (Method method : type.getMethods()) {
+                        if (name.equals(method.getName()) && method.getParameterCount() == parameterCount) {
+                            try {
+                                method.setAccessible(true);
+                            } catch (Throwable ignored) {
+                                // The method may already be public and accessible.
+                            }
                             return method;
                         }
                     }
-                    return fallback;
-                }
-
-                private static Object createResourceLocation(Class<?> locationClass, String namespace, String path) {
-                    String[] factoryNames = new String[]{"fromNamespaceAndPath", "tryBuild"};
-                    for (String factoryName : factoryNames) {
-                        try {
-                            Method factory = locationClass.getMethod(factoryName, String.class, String.class);
-                            return factory.invoke(null, namespace, path);
-                        } catch (NoSuchMethodException ignored) {
-                            // Try the next construction strategy.
-                        } catch (Throwable throwable) {
-                            LOG.log(Level.FINE, "Optional Packs ResourceLocation factory failed", throwable);
+                    for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+                        for (Method method : current.getDeclaredMethods()) {
+                            if (name.equals(method.getName()) && method.getParameterCount() == parameterCount) {
+                                try {
+                                    method.setAccessible(true);
+                                } catch (Throwable ignored) {
+                                    // The method may already be public and accessible.
+                                }
+                                return method;
+                            }
                         }
                     }
-                    try {
-                        Constructor<?> constructor = locationClass.getConstructor(String.class, String.class);
-                        constructor.setAccessible(true);
-                        return constructor.newInstance(namespace, path);
-                    } catch (Throwable ignored) {
-                        // Fall through to the single argument constructor.
-                    }
-                    try {
-                        Constructor<?> constructor = locationClass.getConstructor(String.class);
-                        constructor.setAccessible(true);
-                        return constructor.newInstance(namespace + ":" + path);
-                    } catch (Throwable throwable) {
-                        LOG.log(Level.WARNING, "Optional Packs ResourceLocation construction failed", throwable);
-                        return null;
-                    }
-                }
-
-                private static Object createComponent(Class<?> componentClass, String text) {
-                    try {
-                        Method literal = componentClass.getMethod("literal", String.class);
-                        return literal.invoke(null, text);
-                    } catch (Throwable throwable) {
-                        LOG.log(Level.WARNING, "Optional Packs Component construction failed", throwable);
-                        return null;
-                    }
+                    return null;
                 }
 
                 private static List<String[]> readManifest() {
@@ -534,7 +637,6 @@ public final class GeneratedSourceFactory {
             case FORGE -> forgeHook();
             case FORGE_1165 -> legacyForgeHook();
             case NEOFORGE -> neoForgeHook(context.generatorName());
-            case FABRIC -> fabricHook();
         };
     }
 
@@ -567,7 +669,6 @@ public final class GeneratedSourceFactory {
                 import net.minecraftforge.eventbus.api.SubscribeEvent;
                 import net.minecraftforge.fml.common.Mod;
                 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
-                import net.minecraftforge.fml.event.lifecycle.FMLConstructModEvent;
 
                 @Mod.EventBusSubscriber(modid = "@@MODID@@", bus = Mod.EventBusSubscriber.Bus.MOD)
                 public final class OptionalPacksHook {
@@ -576,13 +677,8 @@ public final class GeneratedSourceFactory {
                     }
 
                     @SubscribeEvent
-                    public static void optionalPacksConstruct(FMLConstructModEvent event) {
-                        OptionalPacksRuntime.copyToGameDirectory();
-                    }
-
-                    @SubscribeEvent
                     public static void optionalPacksClientSetup(FMLClientSetupEvent event) {
-                        OptionalPacksRuntime.reloadResourcePacks();
+                        OptionalPacksRuntime.registerLegacyResourcePacks();
                     }
                 }
                 """;
@@ -619,21 +715,5 @@ public final class GeneratedSourceFactory {
                 + "        OptionalPacksRuntime.onAddPackFinders(event);\n"
                 + "    }\n"
                 + "}\n";
-    }
-
-    private static String fabricHook() {
-        return """
-                package @@PACKAGE@@.optionalpacks;
-
-                import net.fabricmc.api.ModInitializer;
-
-                public final class OptionalPacksHook implements ModInitializer {
-
-                    @Override
-                    public void onInitialize() {
-                        OptionalPacksRuntime.registerFabricPacks("@@MODID@@");
-                    }
-                }
-                """;
     }
 }

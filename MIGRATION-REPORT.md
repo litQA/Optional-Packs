@@ -11,14 +11,16 @@ The implementation was checked against the MCreator 2026.1 application classes a
 | Plugin base class | `net.mcreator.plugin.JavaPlugin` |
 | Build event | `net.mcreator.plugin.events.workspace.WorkspaceBuildStartedEvent` |
 | Build event position | After `Generator.generateBase()` and before `GradleConsole.exec("build")` |
-| Template event | `net.mcreator.plugin.events.ModifyTemplateResultEvent` |
-| Fabric metadata template | `modbase/fabric.mod.json.ftl` |
 | Workspace folder access | `Workspace#getFolderManager()#getWorkspaceFolder()` |
 | Workspace package access | `WorkspaceSettings#getModElementsPackage()` |
 | Generator name access | `Generator#getGeneratorName()` |
 
-The target matrix is exactly the generator directory names listed in the task: six Forge generators, five NeoForge
-generators, and `fabric-1.21.8`.
+The supported target matrix is six Forge generators (`forge-1.16.5` through `forge-1.20.1`) and six NeoForge
+generators (`neoforge-1.20.1`, `neoforge-1.20.4`, `neoforge-1.20.6`, `neoforge-1.21.1`, `neoforge-1.21.4`,
+`neoforge-1.21.8`). Fabric support was removed from this 2026.1 branch.
+
+The NeoForge 1.20.1 generator uses the Forge 1.20.1 code shape and the `net.minecraftforge` package. It therefore
+uses the same generated hook as Forge 1.20.1 instead of the `net.neoforged` hook used by NeoForge 1.20.4 and later.
 
 ## Implementation summary
 
@@ -30,16 +32,22 @@ The build listener performs all work synchronously so the files exist before Gra
 4. Writes the loader hook and shared reflection runtime to `.optional_packs/generated/java/`.
 5. Adds a managed block to the generated `build.gradle`. The block excludes the source drop folders from
    `processResources` and adds the generated Java and resource roots.
-6. For Fabric, extracts the archives into the directory layout required by Fabric's built-in pack API.
 
-Forge and NeoForge hooks use `AddPackFindersEvent`. A temporary directory containing the bundled zips is registered
-through `FolderRepositorySource` for the pack type reported by the event. NeoForge's event bus annotation differs
-between 1.20.4, 1.20.6, and 1.21.x, so the generated hook follows the annotation form used by each generator.
+Forge 1.17.1 through 1.20.1 and NeoForge 1.20.1 use `AddPackFindersEvent`. The runtime locates the correct
+`FolderRepositorySource` constructor at runtime:
 
-Fabric uses the `main` entrypoint for a generated `ModInitializer`. `fabric.mod.json` is modified through
-`ModifyTemplateResultEvent` to add that entrypoint. The runtime calls
-`ResourceManagerHelper#registerBuiltinResourcePack` with `ResourcePackActivationType.NORMAL`. `NORMAL` is optional and
-disabled by default; no `ALWAYS_ENABLED` or default-enabled mode is used.
+* `(File, PackSource)` on Forge 1.17.1, 1.18.2, and 1.19.2.
+* `(Path, PackType, PackSource)` on Forge 1.19.4 and 1.20.1.
+* `(Path, PackType, PackSource, DirectoryValidator)` on NeoForge 1.20.4 and later.
+
+The `(File, PackSource)` form was the cause of the first-round failure on 1.16.5 through 1.19.2. The previous
+reflection only supplied a `Path`, so no constructor matched and no repository source was added. The current
+reflection supplies either a `Path` or its `File` equivalent.
+
+Forge 1.16.5 has no `AddPackFindersEvent`. Its generated hook runs at `FMLClientSetupEvent`, adds an `IPackFinder` to
+the client `ResourcePackRepository`, and creates `ResourcePackInfo` entries backed by `FilePack` objects. The old
+`ResourcePackInfo.create` arguments are filled by type, and reflective methods are made accessible for generated
+lambda classes. A game-directory copy remains as a fallback only when the finder path is unavailable.
 
 No mod element, editor, menu, toolbar button, preference page, or workspace panel is registered.
 
@@ -54,10 +62,16 @@ No mod element, editor, menu, toolbar button, preference page, or workspace pane
 * Generated runtime compiled with `--release 8` to confirm the runtime does not depend on newer Java language
   features.
 * Generated hooks compiled for every loader family against loader API stubs.
-* A real MC 1.20.1 audit confirmed that `FolderRepositorySource` is constructed through the three-argument
-  constructor. A stubbed MC 1.21.8 audit confirmed the four-argument constructor with `DirectoryValidator`.
+* Real 1.17.1, 1.18.2, and 1.19.2 merged jars: `FolderRepositorySource` is constructed successfully through the
+  `(File, PackSource)` constructor.
+* Real 1.20.1 merged jar: `FolderRepositorySource` is constructed successfully through the `(Path, PackType,
+  PackSource)` constructor.
+* Stubbed 1.21.8 audit: the four-argument `FolderRepositorySource` constructor with `DirectoryValidator` is
+  constructed successfully.
+* Stubbed 1.16.5 audit: the old `IPackFinder` path creates `ResourcePackInfo` entries and accepts every normalized
+  archive, with `required=false`.
 * A standalone Gradle project verified that the managed block excludes raw `resourcepacks/` and `datapacks/` while
-  including generated `optional_packs/` zips and generated Fabric `resourcepacks/r_*/` directories.
+  including generated `optional_packs/` zips.
 * Configuration cache test of the managed block: configuration cache entry stored successfully.
 
 Workspace level in-game verification on each target installation remains a manual test because it requires a real
@@ -67,13 +81,13 @@ MCreator workspace, the matching Minecraft dependencies, and a graphical client.
 
 ### Forge 1.16.5 data packs
 
-Forge 1.16.5 does not provide `AddPackFindersEvent`. Resource packs can be copied into the game directory and the
-client resource pack repository can be reloaded, which is implemented. The world creation data pack list cannot be
-extended from a regular Forge mod without a coremod or mixin. The archive is still normalized and bundled into the jar,
-and the known limitation is limited to automatic data pack registration on Forge 1.16.5.
+Forge 1.16.5 does not provide `AddPackFindersEvent`. Resource packs are registered through the client
+`IPackFinder` path. The world creation data pack list cannot be extended from a regular Forge mod without a coremod
+or mixin. The archive is still normalized and bundled into the jar, and the known limitation is limited to automatic
+data pack registration on Forge 1.16.5.
 
-If a Forge 1.16.5 data pack must be selectable, the user can extract it into the world's `datapacks/` directory
-manually. No archive content is changed by this plugin.
+If a Forge 1.16.5 data pack must be selectable, the user can copy it into the world's `datapacks/` directory manually.
+No archive content is changed by this plugin.
 
 ### Build event dependency
 
@@ -82,22 +96,11 @@ The folders, copies, and generated sources are prepared only when MCreator runs 
 drop folders. This is intentional because the plugin receives the MCreator workspace context from
 `WorkspaceBuildStartedEvent`.
 
-### Fabric directory layout
-
-Fabric's built-in pack API consumes pack directories under `resourcepacks/<id path>`. The build therefore writes
-derived directories in addition to the normalized zips. The derived directory is generated content; the source zip
-is not modified. This increases the mod jar size by the sum of the unpacked archives.
-
-Fabric registration also requires a root `pack.mcmeta`. An archive without that file remains in the jar but is not
-registered with Fabric, because the Fabric API cannot derive pack metadata from it. This is a loader constraint, not
-a repair or rewrite of the archive.
-
 ### Strict pack structure
 
 The plugin deliberately does not validate, repair, or rewrite pack contents. Forge and NeoForge use the loader's
-normal metadata reader; archives with missing or malformed `pack.mcmeta` are skipped by the loader. Fabric packs
-without a root `pack.mcmeta` are skipped during generation. A malformed zip archive is logged and skipped without
-failing the build.
+normal metadata reader; archives with missing or malformed `pack.mcmeta` are skipped by the loader. A malformed zip
+archive is logged and skipped without failing the build.
 
 ### Managed build script block
 
@@ -119,12 +122,12 @@ Compiling the plugin with `--release 25` would produce classes that the bundled 
 
 ### Generator allowlist
 
-Only the generator names listed in the task are processed. A datapack-only or resourcepack-only MCreator workspace,
-or an unlisted generator version, is not modified. The plugin removes its managed block and generated tree when it
-observes an unsupported generator name.
+Only the generator names listed above are processed. A datapack-only or resourcepack-only MCreator workspace, an
+unlisted generator version, or a Fabric workspace is not modified. The plugin removes its managed block and generated
+tree when it observes an unsupported generator name.
 
 ### Dedicated servers
 
-Forge and NeoForge register the data pack repository source on both logical sides through the loader event. Fabric
-uses a common `main` entrypoint. Resource pack registration on a dedicated server is harmless but unused. The data
-pack is still optional and disabled by default.
+Forge and NeoForge register the data pack repository source on both logical sides through the loader event. Resource
+pack registration on a dedicated server is harmless but unused. The data pack is still optional and disabled by
+default.
