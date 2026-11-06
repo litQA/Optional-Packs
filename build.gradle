@@ -1,0 +1,57 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.litqa.optionalpacks'
+
+def versionProperties = new Properties()
+file('version.properties').withInputStream { stream -> versionProperties.load(stream) }
+def versionType = versionProperties.getProperty('version.type', 'beta').trim()
+version = "${versionProperties.getProperty('version.major')}.${versionProperties.getProperty('version.minor')}." +
+        "${versionProperties.getProperty('version.patch')}.${versionProperties.getProperty('version.build')}" +
+        (versionType ? "-${versionType}" : '')
+
+description = 'Optional Packs - MCreator 2026.1 build-time resource pack and data pack bundler'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    // No remote repositories are required. The MCreator API and Log4j API are vendored in libs/ for compilation only.
+}
+
+dependencies {
+    compileOnly files('libs/mcreator-api.jar', 'libs/log4j-api-2.25.3.jar')
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    // MCreator 2026.1 runs on Java 21. Use javac 25 for the build while keeping plugin bytecode loadable by Java 21.
+    options.release = 21
+    options.compilerArgs.add('-Xlint:all')
+}
+
+processResources {
+    filteringCharset = 'UTF-8'
+    // version.properties is outside the resource tree, so declare it explicitly to keep the expanded plugin.json fresh.
+    inputs.file('version.properties')
+    inputs.property('pluginVersion', project.version.toString())
+    filesMatching('plugin.json') {
+        expand(pluginVersion: project.version)
+    }
+}
+
+tasks.named('jar') {
+    archiveFileName = 'optional_packs.zip'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+}
+
+tasks.register('printVersion') {
+    doLast {
+        println project.version
+    }
+}

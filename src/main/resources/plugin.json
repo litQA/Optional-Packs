@@ -1,0 +1,15 @@
+{
+  "id": "optional_packs",
+  "weight": 3001,
+  "javaplugin": "com.litqa.optionalpacks.Launcher",
+  "supportedversions": [
+    2026001
+  ],
+  "info": {
+    "name": "Optional Packs",
+    "version": "${pluginVersion}",
+    "description": "Bundles user supplied resource pack and data pack zip files into a mod build and registers them as optional, disabled-by-default packs.",
+    "author": "LitQA",
+    "license": "CC BY-NC 4.0"
+  }
+}
