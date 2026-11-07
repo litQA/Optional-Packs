@@ -18,13 +18,16 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Plugin entry point.
  *
  * <p>The plugin has no user interface. It prepares the two resource drop folders, copies and normalizes the detected
  * zip archives, writes a loader specific hook into the generated source tree, and updates the generated build
- * script.</p>
+ * script. Fabric workspaces additionally receive the hook in the generated {@code fabric.mod.json} main
+ * entrypoint.</p>
  *
  * <p>MCreator's export action calls {@code Generator.generateBase()} and then Gradle directly, but it does not fire
  * {@link WorkspaceBuildStartedEvent}. The mod base template event is therefore the hook that covers both the normal
@@ -35,6 +38,9 @@ public final class Launcher extends JavaPlugin {
 
     private static final Logger LOG = LogManager.getLogger("Optional Packs");
     private static final String MOD_BASE_TEMPLATE = "modbase/mod.java.ftl";
+    private static final String FABRIC_MOD_JSON_TEMPLATE = "modbase/fabric.mod.json.ftl";
+    private static final String FABRIC_GENERATOR_PREFIX = "fabric-";
+    private static final Pattern MAIN_ENTRYPOINT_ARRAY = Pattern.compile("\"main\"\\s*:\\s*\\[");
     private static final long TEMPLATE_PREPARE_DEDUP_NANOS = TimeUnit.SECONDS.toNanos(30);
 
     private final Map<Path, Long> templatePreparedAt = new ConcurrentHashMap<>();
@@ -67,21 +73,141 @@ public final class Launcher extends JavaPlugin {
 
     private void onTemplateResult(ModifyTemplateResultEvent event) {
         try {
-            if (!MOD_BASE_TEMPLATE.equals(event.getTemplateName())) {
+            String templateName = event.getTemplateName();
+            if (MOD_BASE_TEMPLATE.equals(templateName)) {
+                Object workspaceInfo = event.getDataModel().get("w");
+                if (!(workspaceInfo instanceof WorkspaceInfo info)) {
+                    return;
+                }
+                Workspace workspace = info.getWorkspace();
+                if (prepareWorkspace(workspace, "template event")) {
+                    templatePreparedAt.put(workspace.getFolderManager().getWorkspaceFolder().toPath(),
+                            System.nanoTime());
+                }
                 return;
             }
-            Object workspaceInfo = event.getDataModel().get("w");
-            if (!(workspaceInfo instanceof WorkspaceInfo info)) {
-                return;
-            }
-            Workspace workspace = info.getWorkspace();
-            if (prepareWorkspace(workspace, "template event")) {
-                templatePreparedAt.put(workspace.getFolderManager().getWorkspaceFolder().toPath(), System.nanoTime());
+            if (FABRIC_MOD_JSON_TEMPLATE.equals(templateName)) {
+                injectFabricEntrypoint(event);
             }
         } catch (Throwable throwable) {
-            // Template generation must continue even when pack preparation fails.
-            LOG.error("Optional Packs could not prepare the workspace from the template event", throwable);
+            // Template generation must continue even when pack preparation or metadata injection fails.
+            LOG.error("Optional Packs could not process template " + event.getTemplateName(), throwable);
         }
+    }
+
+    /**
+     * Adds the generated hook to the Fabric {@code main} entrypoint array.
+     *
+     * <p>Fabric Loader only starts entrypoint classes listed in {@code fabric.mod.json}. The template event is the
+     * supported extension point for modifying the generated metadata without changing the generator plugin.</p>
+     *
+     * @param event template result event for {@code modbase/fabric.mod.json.ftl}
+     */
+    private void injectFabricEntrypoint(ModifyTemplateResultEvent event) {
+        Object workspaceInfo = event.getDataModel().get("w");
+        if (!(workspaceInfo instanceof WorkspaceInfo info)) {
+            return;
+        }
+        Workspace workspace = info.getWorkspace();
+        if (workspace == null || workspace.getGenerator() == null) {
+            return;
+        }
+        String generatorName = workspace.getGenerator().getGeneratorName();
+        if (generatorName == null || !generatorName.startsWith(FABRIC_GENERATOR_PREFIX)) {
+            return;
+        }
+
+        String packageName = workspace.getWorkspaceSettings().getModElementsPackage();
+        if (packageName == null || packageName.isBlank()) {
+            Object packageValue = event.getDataModel().get("package");
+            if (packageValue instanceof String value && !value.isBlank()) {
+                packageName = value;
+            }
+        }
+        if (packageName == null || packageName.isBlank()) {
+            return;
+        }
+        packageName = packageName.replaceAll("\\.+$", "");
+        if (packageName.isBlank()) {
+            return;
+        }
+
+        String entrypoint = packageName + ".optionalpacks.OptionalPacksHook";
+        String output = event.getTemplateOutput();
+        String updated = addMainEntrypoint(output, entrypoint);
+        if (updated != null && !updated.equals(output)) {
+            event.setTemplateOutput(updated);
+        }
+    }
+
+    /**
+     * Inserts an additional main entrypoint into the main entrypoint array of a fabric.mod.json document.
+     *
+     * @param json generated mod metadata, may be {@code null}
+     * @param entrypoint fully qualified entrypoint class name
+     * @return the document with the entrypoint added, or the unchanged document when it cannot be modified
+     */
+    private static String addMainEntrypoint(String json, String entrypoint) {
+        if (json == null || json.isBlank()) {
+            return json;
+        }
+
+        Matcher matcher = MAIN_ENTRYPOINT_ARRAY.matcher(json);
+        if (!matcher.find()) {
+            return json;
+        }
+
+        int arrayStart = matcher.end() - 1;
+        int arrayEnd = findClosingBracket(json, arrayStart);
+        if (arrayEnd < 0) {
+            return json;
+        }
+
+        String entry = "\"" + entrypoint + "\"";
+        String arrayContent = json.substring(arrayStart + 1, arrayEnd);
+        if (arrayContent.contains(entry)) {
+            return json;
+        }
+
+        StringBuilder result = new StringBuilder(json);
+        if (arrayContent.isBlank()) {
+            result.insert(arrayStart + 1, entry);
+        } else {
+            result.insert(arrayStart + 1, entry + ",");
+        }
+        return result.toString();
+    }
+
+    /**
+     * Finds the closing bracket that belongs to the given opening bracket, ignoring brackets inside string literals.
+     *
+     * @param text document to inspect
+     * @param openIndex index of the opening bracket
+     * @return index of the matching closing bracket, or {@code -1} when the document is malformed
+     */
+    private static int findClosingBracket(String text, int openIndex) {
+        int depth = 0;
+        boolean inString = false;
+        for (int index = openIndex; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (inString) {
+                if (character == '\\') {
+                    index++;
+                } else if (character == '"') {
+                    inString = false;
+                }
+            } else if (character == '"') {
+                inString = true;
+            } else if (character == '[') {
+                depth++;
+            } else if (character == ']') {
+                depth--;
+                if (depth == 0) {
+                    return index;
+                }
+            }
+        }
+        return -1;
     }
 
     private boolean prepareWorkspace(Workspace workspace, String trigger) throws IOException {

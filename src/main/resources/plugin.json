@@ -3,7 +3,8 @@
   "weight": 3001,
   "javaplugin": "com.litqa.optionalpacks.Launcher",
   "supportedversions": [
-    2026001
+    202600344621,
+    2026003
   ],
   "info": {
     "name": "Optional Packs",

@@ -24,6 +24,7 @@ public final class OptionalPacksBuildHandler {
     private static final Logger LOG = Logger.getLogger("Optional Packs");
 
     private static final Set<String> SUPPORTED_GENERATORS = Set.of(
+            // Generators supported by the 2026.1 branch. Third-party plugins may still provide these in 2026.3.
             "forge-1.16.5",
             "forge-1.17.1",
             "forge-1.18.2",
@@ -35,7 +36,26 @@ public final class OptionalPacksBuildHandler {
             "neoforge-1.20.6",
             "neoforge-1.21.1",
             "neoforge-1.21.4",
-            "neoforge-1.21.8");
+            "neoforge-1.21.8",
+            // Forge releases that moved to official runtime mappings.
+            "forge-1.20.4",
+            "forge-1.20.6",
+            "forge-1.21.1",
+            "forge-26.1.2",
+            "forge-26.2",
+            "forge-26.3",
+            // NeoForge releases added after the 2026.1 branch.
+            "neoforge-26.1.2",
+            "neoforge-26.2",
+            "neoforge-26.3",
+            // Fabric releases. Fabric reads pack directories rather than archives.
+            "fabric-1.20.1",
+            "fabric-1.21.1",
+            "fabric-1.21.8",
+            "fabric-1.21.11",
+            "fabric-26.1.2",
+            "fabric-26.2",
+            "fabric-26.3");
 
     private static final String RESOURCE_FOLDER = "resourcepacks";
     private static final String DATA_FOLDER = "datapacks";
@@ -69,6 +89,12 @@ public final class OptionalPacksBuildHandler {
 
         List<NormalizedPack> resourcePacks = copyPacks(resourceSource, generatedResourcePacks);
         List<NormalizedPack> dataPacks = copyPacks(dataSource, generatedDataPacks);
+
+        if (context.target() == BuildContext.Target.FABRIC) {
+            // Fabric's built-in pack API reads directories inside the mod jar, not arbitrary zip archives.
+            FabricPackExtractor.extract(generatedResources, resourcePacks, "resourcepacks");
+            FabricPackExtractor.extract(generatedResources, dataPacks, "datapacks");
+        }
 
         writeManifest(generatedResources, resourcePacks, dataPacks);
         writeVersionMarker(generatedResources, context);
@@ -125,6 +151,13 @@ public final class OptionalPacksBuildHandler {
         if (generatorName != null && generatorName.startsWith("neoforge-")) {
             return BuildContext.Target.NEOFORGE;
         }
+        if (generatorName != null && generatorName.startsWith("fabric-")) {
+            return BuildContext.Target.FABRIC;
+        }
+        // Forge 1.20.2 and later use official runtime mappings, so member-name reflection is safe in production.
+        if (generatorName != null && generatorName.startsWith("forge-")) {
+            return BuildContext.Target.FORGE_MODERN_REFLECTIVE;
+        }
         throw new IllegalArgumentException("Unsupported generator: " + generatorName);
     }
 
@@ -175,6 +208,7 @@ public final class OptionalPacksBuildHandler {
         Path marker = generatedResources.resolve("optional_packs").resolve("version.txt");
         String content = "plugin=" + context.pluginVersion() + "\n"
                 + "generator=" + context.generatorName() + "\n"
+                + "target=" + context.target().name() + "\n"
                 + "modid=" + context.modId() + "\n";
         Files.createDirectories(marker.getParent());
         Files.writeString(marker, content, StandardCharsets.UTF_8);

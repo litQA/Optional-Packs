@@ -11,7 +11,7 @@ version = "${versionProperties.getProperty('version.major')}.${versionProperties
         "${versionProperties.getProperty('version.patch')}.${versionProperties.getProperty('version.build')}" +
         (versionType ? "-${versionType}" : '')
 
-description = 'Optional Packs - MCreator 2026.1 build-time resource pack and data pack bundler'
+description = 'Optional Packs - MCreator 2026.3 build-time resource pack and data pack bundler'
 
 java {
     toolchain {
@@ -24,13 +24,13 @@ repositories {
 }
 
 dependencies {
-    compileOnly files('libs/mcreator-api.jar', 'libs/log4j-api-2.25.3.jar')
+    compileOnly files('libs/mcreator-api.jar', 'libs/log4j-api-2.26.1.jar')
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-    // MCreator 2026.1 runs on Java 21. Use javac 25 for the build while keeping plugin bytecode loadable by Java 21.
-    options.release = 21
+    // MCreator 2026.3 runs on the bundled JBR 25, so the plugin targets Java 25 bytecode.
+    options.release = 25
     options.compilerArgs.add('-Xlint:all')
 }
 

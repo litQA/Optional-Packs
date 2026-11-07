@@ -36,8 +36,15 @@ public record BuildContext(Path workspace, Path resources, String generatorName,
         FORGE_MODERN,
         /** Forge 1.16.5, which predates AddPackFindersEvent. */
         FORGE_1165,
-        /** NeoForge 1.20.4 through 1.21.8. */
-        NEOFORGE
+        /**
+         * Forge 1.20.4 and later. These releases use official runtime mappings, so the shared reflective
+         * FolderRepositorySource path is production-safe again.
+         */
+        FORGE_MODERN_REFLECTIVE,
+        /** NeoForge 1.20.4 through 26.x. */
+        NEOFORGE,
+        /** Fabric 1.20.1 through 26.x, using the built-in pack directory API. */
+        FABRIC
     }
 
     public Path generatedRoot() {

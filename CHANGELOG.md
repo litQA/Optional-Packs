@@ -2,6 +2,37 @@
 
 All notable changes to this branch are documented in this file. Versions are listed newest first.
 
+# 1.1.2.12-beta
+
+## New Content
+
+- MCreator 2026.3 (EAP 2026.3.44621) plugin descriptor support through the snapshot version identifier
+  `202600344621` and the stable major identifier `2026003`.
+- Fabric support for `fabric-1.20.1`, `fabric-1.21.1`, `fabric-1.21.8`, `fabric-1.21.11`, `fabric-26.1.2`,
+  `fabric-26.2`, and `fabric-26.3`. Fabric reads extracted pack directories and receives the generated hook through
+  the `fabric.mod.json` main entrypoint.
+- Forge support for `forge-1.20.4`, `forge-1.20.6`, `forge-1.21.1`, `forge-26.1.2`, `forge-26.2`, and
+  `forge-26.3` through a reflective `FolderRepositorySource` path that is safe under official runtime mappings.
+- NeoForge support for `neoforge-26.1.2`, `neoforge-26.2`, and `neoforge-26.3`.
+
+## Changes
+
+- The plugin now compiles against the vendored MCreator 2026.3 API classes and the 2026.3 Log4j API.
+- Plugin bytecode now targets Java 25 to match the bundled MCreator 2026.3 JBR 25 runtime.
+- The retained 2026.1 generator matrix remains supported: six Forge generators and six NeoForge generators.
+- `optional_packs/version.txt` now also records the generated loader target.
+- The support matrix documentation, migration report, and acceptance steps cover the new loaders and versions.
+
+## Known Limitations
+
+- Several requested generator versions are not bundled with the 2026.3 EAP and require third-party generator plugins;
+  they remain unverified on a real machine.
+- Forge 26.x follows the Forge 1.20.4-1.21.1 event and annotation shape; a different third-party event bus shape would
+  need a new branch.
+- Fabric archives without a root `pack.mcmeta` are bundled but not registered.
+- Forge 1.16.5 data packs still cannot be added to the world creation list without a coremod or mixin.
+- Pack contents are not validated, repaired, or rewritten. Invalid structures are left for the loader to skip.
+
 # 1.1.1.8
 
 ## Changes
