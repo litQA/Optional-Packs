@@ -2,6 +2,21 @@
 
 All notable changes to this branch are documented in this file. Versions are listed newest first.
 
+# 1.1.1.8
+
+## Changes
+
+- MCreator 2026.1 formal release. The `1.1.0.7-beta` export-safe preparation, targeted cleanup, and version-marker
+  behavior is promoted without functional changes.
+- `version.type` is empty for this release; the plugin descriptor and package carry `1.1.1.8` without a beta suffix.
+
+## Known Limitations
+
+- Forge 1.16.5 data packs are still bundled but cannot be added to the world creation data pack list without a
+  coremod or mixin. See [MIGRATION-REPORT.md](MIGRATION-REPORT.md).
+- Cleanup deletes `build/libs`; if the game holds an old jar open on Windows, close the game and retry.
+- Pack contents are not validated, repaired, or rewritten. Invalid structures are left for the loader to skip.
+
 # 1.1.0.7-beta
 
 ## New Content
