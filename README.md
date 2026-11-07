@@ -18,8 +18,15 @@ Fabric support was removed from this 2026.1 branch. The NeoForge 1.20.1 generato
 
 ## How it works
 
-On every MCreator workspace build, the plugin runs in the `WorkspaceBuildStartedEvent` listener, after MCreator has
-regenerated the workspace base and before Gradle starts.
+The plugin prepares the workspace from the `modbase/mod.java.ftl` template event, which also runs during MCreator's
+**Export mod** action, and from the `WorkspaceBuildStartedEvent` listener as a build-action fallback. MCreator's
+export action calls `generateBase()` and Gradle directly, but it does not fire the workspace build-started event, so
+the template event is the path that prevents stale exports.
+
+Before writing new files, it removes the workspace `.optional_packs` directory and plugin-owned build outputs:
+`.optional_packs`, `build/classes/**/optionalpacks`, `build/resources/main/optional_packs`, old derived Fabric
+resource directories, `build/libs`, and `build/tmp/jar`. This makes a converted workspace and an exported jar rebuild
+from the current source drop folders.
 
 1. It creates `src/main/resources/resourcepacks/` and `src/main/resources/datapacks/` when they are missing.
 2. It scans only direct `.zip` files in those folders. Folders, non-zip files, and nested files are ignored.
@@ -27,8 +34,12 @@ regenerated the workspace base and before Gradle starts.
    repeated underscores and adding `_2`, `_3`, ... for collisions.
 4. It copies the untouched archives to `.optional_packs/generated/resources/optional_packs/`.
 5. It writes a loader-specific hook and a shared reflection runtime to `.optional_packs/generated/java/`.
-6. It appends a managed block to the generated `build.gradle` so the generated sources and resources are compiled and
+6. It writes `optional_packs/version.txt` and a `VERSION` constant into the generated runtime for traceability.
+7. It appends a managed block to the generated `build.gradle` so the generated sources and resources are compiled and
    included in the mod jar, while the source drop folders are excluded from the jar.
+
+A short preparation timestamp prevents the template event and the following build event from processing the same
+workspace twice.
 
 Forge hooks are generated as compile-time source for each API generation. ForgeGradle/NeoGradle reobfuscates the
 Minecraft references for production, so the exported jar keeps working after leaving the development environment.
@@ -92,7 +103,12 @@ The generated mod receives the normalized archives in its jar:
 ```text
 optional_packs/resourcepacks/<normalized>.zip
 optional_packs/datapacks/<normalized>.zip
+optional_packs/version.txt
 ```
+
+The export action calls `generateBase()` and then Gradle. The template event removes `.optional_packs`, plugin-owned
+classes/resources, and `build/libs` before Gradle starts, so an export after a generator conversion cannot reuse the
+previous jar. Check `optional_packs/version.txt` to confirm the plugin version that produced the jar.
 
 ## Building this plugin
 
@@ -118,19 +134,20 @@ project version, and package version stay aligned.
 1. Open a workspace with a supported generator and run **Build workspace**. The two drop folders exist under
    `src/main/resources/`.
 2. Copy the example archives into the drop folders and build again.
-3. Inspect the mod jar. It contains `optional_packs/resourcepacks/example_resource_pack.zip` and
-   `optional_packs/datapacks/example_data_pack.zip`, and it does not contain the raw source zips.
+3. Inspect the mod jar. It contains `optional_packs/resourcepacks/example_resource_pack.zip`,
+   `optional_packs/datapacks/example_data_pack.zip`, and `optional_packs/version.txt`, and it does not contain the raw
+   source zips.
 4. Start the client. The resource pack list contains the normalized pack name and the pack is disabled by default.
-5. Export the mod jar, install it in a normal Forge/NeoForge instance, and repeat step 4. This is the required check
-   because Forge production remaps Minecraft member names.
+5. Use **Export mod** directly, without a preceding **Build workspace**, install the exported jar in a normal
+   Forge/NeoForge instance, and repeat step 4. This is the required check because the export action does not fire the
+   build-started event and Forge production remaps Minecraft member names.
 6. Create a world. The data pack list contains the normalized data pack name and the pack is disabled by default.
 7. Confirm that MCreator's workspace panels and element lists are unchanged.
 8. Add a file with a non-zip extension and a broken zip. The build still succeeds; the broken archive is ignored or
    skipped by the loader without failing the build.
 
-Do not test by running `gradlew build` directly in the generated workspace. The pack processing is driven by
-MCreator's `WorkspaceBuildStartedEvent`; a direct Gradle invocation only sees the files left by the last MCreator
-build.
+Do not test by running `gradlew build` directly in the generated workspace. The pack processing is driven by MCreator's
+template and build events; a direct Gradle invocation only sees the files left by the last MCreator action.
 
 ## Versioning
 

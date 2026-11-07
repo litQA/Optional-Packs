@@ -11,6 +11,8 @@ The implementation was checked against the MCreator 2026.1 application classes a
 | Plugin base class | `net.mcreator.plugin.JavaPlugin` |
 | Build event | `net.mcreator.plugin.events.workspace.WorkspaceBuildStartedEvent` |
 | Build event position | After `Generator.generateBase()` and before `GradleConsole.exec("build")` |
+| Template event | `net.mcreator.plugin.events.ModifyTemplateResultEvent` for `modbase/mod.java.ftl` |
+| Export action | Calls `generateBase()`, then Gradle `build`, then copies `build/libs`; it does not fire the build event |
 | Workspace folder access | `Workspace#getFolderManager()#getWorkspaceFolder()` |
 | Workspace package access | `WorkspaceSettings#getModElementsPackage()` |
 | Generator name access | `Generator#getGeneratorName()` |
@@ -24,14 +26,32 @@ uses the same generated hook as Forge 1.20.1 instead of the `net.neoforged` hook
 
 ## Implementation summary
 
-The build listener performs all work synchronously so the files exist before Gradle starts:
+Preparation runs synchronously from two hooks so files exist before Gradle starts:
 
-1. Creates the source drop folders.
-2. Scans only direct `.zip` files.
-3. Normalizes names and copies archives to `.optional_packs/generated/resources/optional_packs/`.
-4. Writes the loader hook and shared reflection runtime to `.optional_packs/generated/java/`.
-5. Adds a managed block to the generated `build.gradle`. The block excludes the source drop folders from
-   `processResources` and adds the generated Java and resource roots.
+* `ModifyTemplateResultEvent` for `modbase/mod.java.ftl`, which runs inside `generateBase()` and therefore also runs
+  for MCreator's **Export mod** action.
+* `WorkspaceBuildStartedEvent`, retained as a fallback for build actions that do not render the mod-base template.
+
+The export action was decompiled to confirm its order: `runResourceSetupTasks()`, `generateBase()`,
+`GradleConsole.exec("build")`, then a copy of `build/libs/modid-1.0.jar`. It does not fire
+`WorkspaceBuildStartedEvent`. The template event is the supported extension point that covers it.
+
+Each preparation:
+
+1. Removes the workspace `.optional_packs` directory and plugin-owned build outputs.
+2. Creates the source drop folders.
+3. Scans only direct `.zip` files.
+4. Normalizes names and copies archives to `.optional_packs/generated/resources/optional_packs/`.
+5. Writes the loader hook and shared runtime to `.optional_packs/generated/java/`.
+6. Writes `optional_packs/version.txt` and `OptionalPacksRuntime.VERSION`.
+7. Adds a managed block to the generated `build.gradle`.
+
+The cleanup removes `.optional_packs`, every `build/classes/java/main/**/optionalpacks` directory,
+`build/resources/main/optional_packs`, old derived Fabric resource directories, `build/libs`, and `build/tmp/jar`.
+This covers generator conversion and stale export output without deleting `.gradle` caches or the whole build tree.
+
+A short in-memory preparation timestamp prevents the template event and the immediately following build event from
+processing the same workspace twice.
 
 Forge hooks are generated as compile-time source for each API generation. This is required because Forge production
 remaps Minecraft member names (methods and fields) while the development environment uses named mappings. Reflection
@@ -62,6 +82,8 @@ No mod element, editor, menu, toolbar button, preference page, or workspace pane
   libraries.
 * Build-handler harness for all supported generator names: folders created, only zip files selected, normalization
   and collision handling executed, source archives copied unchanged, build block injected.
+* Cleanup harness: stale `build/classes/**/optionalpacks`, `build/resources/main/optional_packs`, and `build/libs`
+  artifacts were removed; the version marker was regenerated.
 * Generated runtime compiled with `--release 8` to confirm the runtime does not depend on newer Java language
   features.
 * Direct Forge hooks compiled against the real merged jars of 1.17.1, 1.18.2, 1.19.2, 1.19.4, 1.20.1, and
@@ -90,12 +112,17 @@ data pack registration on Forge 1.16.5.
 If a Forge 1.16.5 data pack must be selectable, the user can copy it into the world's `datapacks/` directory manually.
 No archive content is changed by this plugin.
 
-### Build event dependency
+### Export action and direct Gradle
 
-The folders, copies, and generated sources are prepared only when MCreator runs a workspace build. Running
-`gradlew build` directly in the generated workspace reuses the last prepared tree and does not rescan the source
-drop folders. This is intentional because the plugin receives the MCreator workspace context from
-`WorkspaceBuildStartedEvent`.
+The template event covers MCreator's build and export actions. A direct `gradlew build` invocation in the generated
+workspace still does not run MCreator's template generation, so it reuses the last prepared tree. The plugin does not
+try to patch MCreator's private export action.
+
+### Build output cleanup
+
+`build/libs` and the plugin-owned class/resource directories are deleted before each preparation. If an old jar is
+locked by a running game on Windows, deletion can fail; close the game and retry. The cleanup intentionally does not
+delete `.gradle` caches or the entire `build` directory.
 
 ### Strict pack structure
 
@@ -105,9 +132,9 @@ archive is logged and skipped without failing the build.
 
 ### Managed build script block
 
-The block appended to `build.gradle` is regenerated on each MCreator build. Manual edits inside the managed markers
-are lost. MCreator regenerates `build.gradle` from its generator template before the build event, so the plugin
-appends the current block after that regeneration.
+The block appended to `build.gradle` is regenerated on each MCreator preparation. Manual edits inside the managed
+markers are lost. MCreator regenerates `build.gradle` from its generator base before template rendering, so the plugin
+appends the current block during the template event, before Gradle starts.
 
 ### Synchronous event timeout
 

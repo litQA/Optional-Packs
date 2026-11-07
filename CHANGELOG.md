@@ -2,6 +2,38 @@
 
 All notable changes to this branch are documented in this file. Versions are listed newest first.
 
+# 1.1.0.7-beta
+
+## New Content
+
+- Mod-base template event preparation, so MCreator's export action regenerates optional pack sources, resources, and
+  the managed build script before Gradle runs even though the export action does not fire `WorkspaceBuildStartedEvent`.
+- A generated version marker in `optional_packs/version.txt` and `OptionalPacksRuntime.VERSION`.
+- Targeted cleanup of plugin-owned build outputs before every preparation.
+
+## Changes
+
+- The workspace `.optional_packs` directory is removed and rebuilt on every preparation.
+- Stale `build/classes/**/optionalpacks`, `build/resources/main/optional_packs`, old derived Fabric resource
+  directories, `build/libs`, and `build/tmp/jar` are removed before Gradle.
+- A short preparation window prevents the template event and the following build event from processing the same
+  workspace twice.
+
+## Fixes
+
+Fixed 1 bug(s).
+
+- Exported Forge jars could reuse stale optional pack classes and resources after a workspace generator conversion or
+  an export without a preceding explicit build. The export action calls `generateBase()` but not the build-started
+  event, so preparation now also runs from the mod-base template event.
+
+## Known Limitations
+
+- Cleanup deletes `build/libs`; if the game is holding an old jar open on Windows, deletion can fail and must be
+  retried after closing the game.
+- Preparation runs synchronously in MCreator's template event with the standard ten-second listener timeout.
+- A direct Gradle task that does not call `generateBase()` is not covered by the template event path.
+
 # 1.0.2.6-beta
 
 ## Changes

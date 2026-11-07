@@ -14,7 +14,7 @@ import java.util.Objects;
  * @param target loader family that receives the generated runtime hook
  */
 public record BuildContext(Path workspace, Path resources, String generatorName, String modId,
-                           String packageName, Target target) {
+                           String packageName, String pluginVersion, Target target) {
 
     public BuildContext {
         Objects.requireNonNull(workspace, "workspace");
@@ -22,6 +22,7 @@ public record BuildContext(Path workspace, Path resources, String generatorName,
         Objects.requireNonNull(generatorName, "generatorName");
         Objects.requireNonNull(modId, "modId");
         Objects.requireNonNull(packageName, "packageName");
+        Objects.requireNonNull(pluginVersion, "pluginVersion");
         Objects.requireNonNull(target, "target");
     }
 

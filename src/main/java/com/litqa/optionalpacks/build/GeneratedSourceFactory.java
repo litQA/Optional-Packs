@@ -53,6 +53,8 @@ public final class GeneratedSourceFactory {
              */
             public final class OptionalPacksRuntime {
 
+                public static final String VERSION = "@@VERSION@@";
+
                 private static final Logger LOG = Logger.getLogger("Optional Packs");
                 private static final String MANIFEST = "optional_packs/packs.txt";
                 private static final String RESOURCE_PREFIX = "optional_packs/resourcepacks/";
@@ -835,7 +837,9 @@ public final class GeneratedSourceFactory {
         Files.createDirectories(packageDirectory);
 
         Files.writeString(packageDirectory.resolve("OptionalPacksRuntime.java"),
-                RUNTIME_TEMPLATE.replace("@@PACKAGE@@", context.packageName()), StandardCharsets.UTF_8);
+                RUNTIME_TEMPLATE.replace("@@PACKAGE@@", context.packageName())
+                        .replace("@@VERSION@@", context.pluginVersion()),
+                StandardCharsets.UTF_8);
         Files.writeString(packageDirectory.resolve("OptionalPacksHook.java"),
                 hookSource(context).replace("@@PACKAGE@@", context.packageName())
                         .replace("@@MODID@@", context.modId()),

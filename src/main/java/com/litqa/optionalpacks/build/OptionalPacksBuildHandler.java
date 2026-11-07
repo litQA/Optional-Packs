@@ -50,14 +50,17 @@ public final class OptionalPacksBuildHandler {
      * @throws IOException when the generated tree or build script cannot be written
      */
     public static void handle(BuildContext context) throws IOException {
+        // The export action calls generateBase() and Gradle without firing WorkspaceBuildStartedEvent. The template
+        // event calls this method before Gradle; stale plugin state and plugin-owned build outputs are removed first.
+        deleteRecursively(context.workspace().resolve(".optional_packs"));
+        cleanupBuildOutputs(context.workspace());
+
         Path resources = context.resources();
         Path resourceSource = resources.resolve(RESOURCE_FOLDER);
         Path dataSource = resources.resolve(DATA_FOLDER);
         Files.createDirectories(resourceSource);
         Files.createDirectories(dataSource);
 
-        Path generatedRoot = context.generatedRoot();
-        deleteRecursively(generatedRoot);
         Path generatedResources = context.generatedResourcesRoot();
         Path generatedResourcePacks = generatedResources.resolve("optional_packs").resolve(RESOURCE_FOLDER);
         Path generatedDataPacks = generatedResources.resolve("optional_packs").resolve(DATA_FOLDER);
@@ -68,6 +71,7 @@ public final class OptionalPacksBuildHandler {
         List<NormalizedPack> dataPacks = copyPacks(dataSource, generatedDataPacks);
 
         writeManifest(generatedResources, resourcePacks, dataPacks);
+        writeVersionMarker(generatedResources, context);
         GeneratedSourceFactory.write(context, resourcePacks, dataPacks);
         BuildScriptInjector.inject(context.workspace().resolve("build.gradle"));
 
@@ -76,13 +80,15 @@ public final class OptionalPacksBuildHandler {
     }
 
     /**
-     * Removes generated files and the managed build script block for a workspace that is not supported by this plugin.
+     * Removes generated files, plugin-owned build outputs, and the managed build script block for a workspace that is
+     * not supported by this plugin.
      *
      * @param workspace workspace root
      * @throws IOException when the build script cannot be updated
      */
     public static void cleanup(Path workspace) throws IOException {
-        deleteRecursively(workspace.resolve(".optional_packs").resolve("generated"));
+        deleteRecursively(workspace.resolve(".optional_packs"));
+        cleanupBuildOutputs(workspace);
         BuildScriptInjector.remove(workspace.resolve("build.gradle"));
     }
 
@@ -163,6 +169,41 @@ public final class OptionalPacksBuildHandler {
         Path manifestPath = generatedResources.resolve("optional_packs").resolve("packs.txt");
         Files.createDirectories(manifestPath.getParent());
         Files.writeString(manifestPath, manifest.toString(), StandardCharsets.UTF_8);
+    }
+
+    private static void writeVersionMarker(Path generatedResources, BuildContext context) throws IOException {
+        Path marker = generatedResources.resolve("optional_packs").resolve("version.txt");
+        String content = "plugin=" + context.pluginVersion() + "\n"
+                + "generator=" + context.generatorName() + "\n"
+                + "modid=" + context.modId() + "\n";
+        Files.createDirectories(marker.getParent());
+        Files.writeString(marker, content, StandardCharsets.UTF_8);
+    }
+
+    private static void cleanupBuildOutputs(Path workspace) {
+        Path classesRoot = workspace.resolve("build").resolve("classes").resolve("java").resolve("main");
+        if (Files.isDirectory(classesRoot)) {
+            List<Path> staleDirectories = new ArrayList<>();
+            try (var stream = Files.walk(classesRoot)) {
+                stream.filter(Files::isDirectory)
+                        .filter(path -> "optionalpacks".equals(path.getFileName().toString()))
+                        .forEach(staleDirectories::add);
+            } catch (IOException exception) {
+                LOG.log(Level.WARNING, "Could not scan optional pack class outputs in " + classesRoot, exception);
+            }
+            staleDirectories.sort(Comparator.comparingInt(Path::getNameCount).reversed());
+            for (Path staleDirectory : staleDirectories) {
+                deleteRecursively(staleDirectory);
+            }
+        }
+
+        deleteRecursively(workspace.resolve("build").resolve("resources").resolve("main").resolve("optional_packs"));
+        // Remove derived directories produced by older plugin versions that still supported Fabric.
+        deleteRecursively(workspace.resolve("build").resolve("resources").resolve("main").resolve("resourcepacks"));
+        deleteRecursively(workspace.resolve("build").resolve("resources").resolve("main").resolve("datapacks"));
+        // Removing the jar output guarantees that the export action cannot copy an older jar if Gradle re-runs.
+        deleteRecursively(workspace.resolve("build").resolve("libs"));
+        deleteRecursively(workspace.resolve("build").resolve("tmp").resolve("jar"));
     }
 
     private static void deleteRecursively(Path path) {
