@@ -30,13 +30,19 @@ regenerated the workspace base and before Gradle starts.
 6. It appends a managed block to the generated `build.gradle` so the generated sources and resources are compiled and
    included in the mod jar, while the source drop folders are excluded from the jar.
 
-Forge 1.17.1 through 1.20.1, NeoForge 1.20.1, and NeoForge 1.20.4 through 1.21.8 use `AddPackFindersEvent`. The
-generated source selects a `FolderRepositorySource` constructor that matches the target version: the older
-`(File, PackSource)` form for 1.17.1 through 1.19.2, and the newer `Path`/`PackType` form for 1.19.4 and later.
+Forge hooks are generated as compile-time source for each API generation. ForgeGradle/NeoGradle reobfuscates the
+Minecraft references for production, so the exported jar keeps working after leaving the development environment.
+Reflection is used only by NeoForge 1.20.4 and later, where the runtime names are stable.
 
-Forge 1.16.5 predates `AddPackFindersEvent`. Its hook adds an `IPackFinder` to the client
-`ResourcePackRepository` and creates `ResourcePackInfo` entries backed by `FilePack` objects for the normalized
-archives. A game-directory copy is retained as a fallback when the old reflection path is unavailable.
+* Forge 1.17.1 through 1.19.2: `new FolderRepositorySource(File, PackSource.BUILT_IN)`.
+* Forge 1.19.4, Forge 1.20.1, and NeoForge 1.20.1: `new FolderRepositorySource(Path, event.getPackType(),
+  PackSource.BUILT_IN)`.
+* Forge 1.16.5: a direct `IPackFinder` lambda that creates `ResourcePackInfo` entries backed by extracted `FolderPack`
+  directories.
+
+The generated runtime resolves nested mod-jar resources through Forge/NeoForge `ModList` and `ModFile.findResource`
+first, then through the class code source, and finally through the class loader. This keeps resource lookups working
+in production jars, where class-loader resource lookup can be filtered.
 
 The generated pack identifiers use the normalized file names. The source zip files are never renamed, rewritten, or
 unpacked in place.
@@ -115,9 +121,11 @@ project version, and package version stay aligned.
 3. Inspect the mod jar. It contains `optional_packs/resourcepacks/example_resource_pack.zip` and
    `optional_packs/datapacks/example_data_pack.zip`, and it does not contain the raw source zips.
 4. Start the client. The resource pack list contains the normalized pack name and the pack is disabled by default.
-5. Create a world. The data pack list contains the normalized data pack name and the pack is disabled by default.
-6. Confirm that MCreator's workspace panels and element lists are unchanged.
-7. Add a file with a non-zip extension and a broken zip. The build still succeeds; the broken archive is ignored or
+5. Export the mod jar, install it in a normal Forge/NeoForge instance, and repeat step 4. This is the required check
+   because Forge production remaps Minecraft member names.
+6. Create a world. The data pack list contains the normalized data pack name and the pack is disabled by default.
+7. Confirm that MCreator's workspace panels and element lists are unchanged.
+8. Add a file with a non-zip extension and a broken zip. The build still succeeds; the broken archive is ignored or
    skipped by the loader without failing the build.
 
 Do not test by running `gradlew build` directly in the generated workspace. The pack processing is driven by

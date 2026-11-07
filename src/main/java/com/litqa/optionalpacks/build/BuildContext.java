@@ -29,8 +29,10 @@ public record BuildContext(Path workspace, Path resources, String generatorName,
      * Loader family used to select the generated hook source.
      */
     public enum Target {
-        /** Forge 1.17.1 through 1.20.1 and NeoForge 1.20.1, using AddPackFindersEvent. */
-        FORGE,
+        /** Forge 1.17.1 through 1.19.2, using the File based FolderRepositorySource. */
+        FORGE_LEGACY,
+        /** Forge 1.19.4, Forge 1.20.1, and NeoForge 1.20.1, using the Path/PackType based source. */
+        FORGE_MODERN,
         /** Forge 1.16.5, which predates AddPackFindersEvent. */
         FORGE_1165,
         /** NeoForge 1.20.4 through 1.21.8. */

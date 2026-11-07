@@ -106,13 +106,15 @@ public final class OptionalPacksBuildHandler {
         if ("forge-1.16.5".equals(generatorName)) {
             return BuildContext.Target.FORGE_1165;
         }
+        if ("forge-1.17.1".equals(generatorName) || "forge-1.18.2".equals(generatorName)
+                || "forge-1.19.2".equals(generatorName)) {
+            return BuildContext.Target.FORGE_LEGACY;
+        }
         // The NeoForge 1.20.1 generator is the Forge 1.20.1 generator with NeoForge branding and uses the same
         // net.minecraftforge API surface.
-        if ("neoforge-1.20.1".equals(generatorName)) {
-            return BuildContext.Target.FORGE;
-        }
-        if (generatorName != null && generatorName.startsWith("forge-")) {
-            return BuildContext.Target.FORGE;
+        if ("forge-1.19.4".equals(generatorName) || "forge-1.20.1".equals(generatorName)
+                || "neoforge-1.20.1".equals(generatorName)) {
+            return BuildContext.Target.FORGE_MODERN;
         }
         if (generatorName != null && generatorName.startsWith("neoforge-")) {
             return BuildContext.Target.NEOFORGE;

@@ -16,6 +16,7 @@ public final class GeneratedSourceFactory {
 
             import java.io.BufferedReader;
             import java.io.File;
+            import java.io.FilterInputStream;
             import java.io.IOException;
             import java.io.InputStream;
             import java.io.InputStreamReader;
@@ -24,6 +25,7 @@ public final class GeneratedSourceFactory {
             import java.lang.reflect.InvocationHandler;
             import java.lang.reflect.Method;
             import java.lang.reflect.Proxy;
+            import java.net.URL;
             import java.nio.charset.StandardCharsets;
             import java.nio.file.DirectoryStream;
             import java.nio.file.Files;
@@ -32,11 +34,16 @@ public final class GeneratedSourceFactory {
             import java.nio.file.StandardCopyOption;
             import java.util.ArrayList;
             import java.util.Collections;
+            import java.util.Enumeration;
             import java.util.List;
             import java.util.Locale;
             import java.util.function.Supplier;
+            import java.util.jar.JarEntry;
+            import java.util.jar.JarFile;
             import java.util.logging.Level;
             import java.util.logging.Logger;
+            import java.util.zip.ZipEntry;
+            import java.util.zip.ZipFile;
 
             /**
              * Loader independent runtime for optional pack discovery.
@@ -54,17 +61,20 @@ public final class GeneratedSourceFactory {
 
                 private static Path resourceRuntimeDirectory;
                 private static Path dataRuntimeDirectory;
+                private static volatile String activeModId;
 
                 private OptionalPacksRuntime() {
                 }
 
                 /**
                  * Handles a Forge or NeoForge AddPackFindersEvent without requiring a compile time dependency on the
-                 * event class. The event object is supplied by the generated loader hook.
+                 * event class. The event object and mod id are supplied by the generated loader hook.
                  *
                  * @param event loader event instance
+                 * @param modId workspace mod id
                  */
-                public static void onAddPackFinders(Object event) {
+                public static void onAddPackFinders(Object event, String modId) {
+                    activeModId = modId;
                     try {
                         Object packType = invokeNoArgs(event, "getPackType");
                         if (packType == null) {
@@ -86,6 +96,112 @@ public final class GeneratedSourceFactory {
                         LOG.warning("Optional Packs could not add a pack repository source");
                     } catch (Throwable throwable) {
                         LOG.log(Level.WARNING, "Optional Packs pack registration failed", throwable);
+                    }
+                }
+
+                /**
+                 * Prepares the temporary directory used by the direct Forge pack repository source code.
+                 * The generated Forge hook calls this method before constructing a FolderRepositorySource.
+                 *
+                 * @param client {@code true} for client resources, {@code false} for server data
+                 * @return directory containing the bundled zip files, or {@code null} on failure
+                 */
+                public static Path preparePackDirectory(boolean client) {
+                    try {
+                        return runtimeDirectory(client);
+                    } catch (Throwable throwable) {
+                        LOG.log(Level.WARNING, "Optional Packs could not prepare the pack directory", throwable);
+                        return null;
+                    }
+                }
+
+                public static Path preparePackDirectory(boolean client, String modId) {
+                    activeModId = modId;
+                    return preparePackDirectory(client);
+                }
+
+                /**
+                 * Extracts the bundled resource packs into per-pack directories for Forge 1.16.5's FolderPack API.
+                 *
+                 * @return extracted pack directories
+                 */
+                public static List<File> prepareLegacyPackDirectories() {
+                    List<File> result = new ArrayList<>();                    try {
+                        Path directory = runtimeDirectory(true);
+                        if (directory == null) {
+                            return result;
+                        }
+                        Path extractRoot = Files.createTempDirectory("optional_packs_legacy_");
+                        try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory, "*.zip")) {
+                            for (Path archive : stream) {
+                                String fileName = archive.getFileName().toString();
+                                String name = fileName.substring(0, fileName.length() - ".zip".length());
+                                Path target = extractRoot.resolve(name);
+                                try {
+                                    extractZip(archive, target);
+                                    if (Files.exists(target.resolve("pack.mcmeta"))) {
+                                        result.add(target.toFile());
+                                    }
+                                } catch (Throwable throwable) {
+                                    LOG.log(Level.WARNING,
+                                            "Optional Packs legacy extraction failed for " + archive, throwable);
+                                    deleteTree(target);
+                                }
+                            }
+                        }
+                    } catch (Throwable throwable) {
+                        LOG.log(Level.WARNING, "Optional Packs could not prepare legacy pack directories", throwable);
+                    }
+                    return result;
+                }
+
+                public static List<File> prepareLegacyPackDirectories(String modId) {
+                    activeModId = modId;
+                    return prepareLegacyPackDirectories();
+                }
+
+                private static void extractZip(Path archive, Path target) throws IOException {
+                    Files.createDirectories(target);
+                    try (ZipFile zip = new ZipFile(archive.toFile())) {
+                        Enumeration<? extends ZipEntry> entries = zip.entries();
+                        while (entries.hasMoreElements()) {
+                            ZipEntry entry = entries.nextElement();
+                            Path destination = target.resolve(entry.getName()).normalize();
+                            if (!destination.startsWith(target)) {
+                                continue;
+                            }
+                            if (entry.isDirectory()) {
+                                Files.createDirectories(destination);
+                            } else {
+                                Path parent = destination.getParent();
+                                if (parent != null) {
+                                    Files.createDirectories(parent);
+                                }
+                                try (InputStream input = zip.getInputStream(entry)) {
+                                    Files.copy(input, destination, StandardCopyOption.REPLACE_EXISTING);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                private static void deleteTree(Path path) {
+                    try {
+                        if (!Files.exists(path)) {
+                            return;
+                        }
+                        List<Path> paths = new ArrayList<>();
+                        try (DirectoryStream<Path> stream = Files.newDirectoryStream(path)) {
+                            for (Path child : stream) {
+                                paths.add(child);
+                            }
+                        }
+                        for (Path child : paths) {
+                            deleteTree(child);
+                        }
+                        Files.deleteIfExists(path);
+                    } catch (Throwable ignored) {
+                        // Temporary files are best effort.
                     }
                 }
 
@@ -139,7 +255,8 @@ public final class GeneratedSourceFactory {
                  * Registers the bundled resource packs with the Forge 1.16.5 client repository. The old API uses
                  * ResourcePackInfo objects and a pack finder instead of the modern FolderRepositorySource.
                  */
-                public static void registerLegacyResourcePacks() {
+                public static void registerLegacyResourcePacks(String modId) {
+                    activeModId = modId;
                     boolean registered = false;
                     try {
                         registered = tryRegisterLegacyPackFinder();
@@ -562,11 +679,104 @@ public final class GeneratedSourceFactory {
                 }
 
                 private static InputStream openResource(String name) {
+                    String modId = activeModId;
+                    if (modId != null) {
+                        InputStream modFileStream = openModFileResource(modId, name);
+                        if (modFileStream != null) {
+                            return modFileStream;
+                        }
+                    }
+                    InputStream codeSourceStream = openCodeSourceResource(name);
+                    if (codeSourceStream != null) {
+                        return codeSourceStream;
+                    }
                     ClassLoader loader = OptionalPacksRuntime.class.getClassLoader();
                     if (loader == null) {
                         loader = Thread.currentThread().getContextClassLoader();
                     }
                     return loader == null ? ClassLoader.getSystemResourceAsStream(name) : loader.getResourceAsStream(name);
+                }
+
+                /**
+                 * Reads a mod jar resource through Forge or NeoForge's ModFile API. In production the mod class loader
+                 * does not always expose nested resource paths through getResourceAsStream.
+                 */
+                private static InputStream openModFileResource(String modId, String name) {
+                    try {
+                        Class<?> modListClass = load("net.minecraftforge.fml.ModList");
+                        if (modListClass == null) {
+                            modListClass = load("net.neoforged.fml.ModList");
+                        }
+                        if (modListClass == null) {
+                            return null;
+                        }
+                        Object modList = modListClass.getMethod("get").invoke(null);
+                        Object modFileInfo = modListClass.getMethod("getModFileById", String.class)
+                                .invoke(modList, modId);
+                        if (modFileInfo == null) {
+                            return null;
+                        }
+                        Object modFile = modFileInfo.getClass().getMethod("getFile").invoke(modFileInfo);
+                        if (modFile == null) {
+                            return null;
+                        }
+                        Method findResource = findMethod(modFile.getClass(), "findResource", 1);
+                        if (findResource == null) {
+                            return null;
+                        }
+                        Object result;
+                        if (findResource.getParameterTypes()[0] == String[].class) {
+                            result = findResource.invoke(modFile, (Object) new String[]{name});
+                        } else {
+                            result = findResource.invoke(modFile, name);
+                        }
+                        if (result instanceof Path && Files.exists((Path) result)) {
+                            return Files.newInputStream((Path) result);
+                        }
+                    } catch (Throwable throwable) {
+                        LOG.log(Level.FINE, "Optional Packs ModFile resource lookup failed: " + name, throwable);
+                    }
+                    return null;
+                }
+
+                /**
+                 * Reads a resource from the code source location. This covers production jars whose class loader
+                 * resource lookup is filtered while the ModFile API is unavailable.
+                 */
+                private static InputStream openCodeSourceResource(String name) {
+                    try {
+                        URL location = OptionalPacksRuntime.class.getProtectionDomain().getCodeSource().getLocation();
+                        if (location == null) {
+                            return null;
+                        }
+                        Path codeSource = Paths.get(location.toURI());
+                        if (Files.isDirectory(codeSource)) {
+                            Path resource = codeSource.resolve(name);
+                            return Files.exists(resource) ? Files.newInputStream(resource) : null;
+                        }
+                        if (!Files.isRegularFile(codeSource)) {
+                            return null;
+                        }
+                        final JarFile jar = new JarFile(codeSource.toFile());
+                        JarEntry entry = jar.getJarEntry(name);
+                        if (entry == null) {
+                            jar.close();
+                            return null;
+                        }
+                        return new FilterInputStream(jar.getInputStream(entry)) {
+                            @Override
+                            public void close() throws IOException {
+                                try {
+                                    super.close();
+                                } finally {
+                                    jar.close();
+                                }
+                            }
+                        };
+                    } catch (Throwable throwable) {
+                        LOG.log(Level.FINE, "Optional Packs code source resource lookup failed: " + name, throwable);
+                    }
+                    return null;
                 }
 
                 private static Object invokeNoArgs(Object target, String methodName) {
@@ -634,16 +844,22 @@ public final class GeneratedSourceFactory {
 
     private static String hookSource(BuildContext context) {
         return switch (context.target()) {
-            case FORGE -> forgeHook();
+            case FORGE_LEGACY -> forgeLegacyRepositoryHook();
+            case FORGE_MODERN -> forgeModernRepositoryHook();
             case FORGE_1165 -> legacyForgeHook();
             case NEOFORGE -> neoForgeHook(context.generatorName());
         };
     }
 
-    private static String forgeHook() {
+    private static String forgeLegacyRepositoryHook() {
         return """
                 package @@PACKAGE@@.optionalpacks;
 
+                import java.nio.file.Path;
+
+                import net.minecraft.server.packs.PackType;
+                import net.minecraft.server.packs.repository.FolderRepositorySource;
+                import net.minecraft.server.packs.repository.PackSource;
                 import net.minecraftforge.event.AddPackFindersEvent;
                 import net.minecraftforge.eventbus.api.SubscribeEvent;
                 import net.minecraftforge.fml.common.Mod;
@@ -656,7 +872,43 @@ public final class GeneratedSourceFactory {
 
                     @SubscribeEvent
                     public static void optionalPacksAddPackFinders(AddPackFindersEvent event) {
-                        OptionalPacksRuntime.onAddPackFinders(event);
+                        Path directory = OptionalPacksRuntime.preparePackDirectory(
+                                event.getPackType() == PackType.CLIENT_RESOURCES, "@@MODID@@");
+                        if (directory != null) {
+                            event.addRepositorySource(new FolderRepositorySource(directory.toFile(), PackSource.BUILT_IN));
+                        }
+                    }
+                }
+                """;
+    }
+
+    private static String forgeModernRepositoryHook() {
+        return """
+                package @@PACKAGE@@.optionalpacks;
+
+                import java.nio.file.Path;
+
+                import net.minecraft.server.packs.PackType;
+                import net.minecraft.server.packs.repository.FolderRepositorySource;
+                import net.minecraft.server.packs.repository.PackSource;
+                import net.minecraftforge.event.AddPackFindersEvent;
+                import net.minecraftforge.eventbus.api.SubscribeEvent;
+                import net.minecraftforge.fml.common.Mod;
+
+                @Mod.EventBusSubscriber(modid = "@@MODID@@", bus = Mod.EventBusSubscriber.Bus.MOD)
+                public final class OptionalPacksHook {
+
+                    private OptionalPacksHook() {
+                    }
+
+                    @SubscribeEvent
+                    public static void optionalPacksAddPackFinders(AddPackFindersEvent event) {
+                        Path directory = OptionalPacksRuntime.preparePackDirectory(
+                                event.getPackType() == PackType.CLIENT_RESOURCES, "@@MODID@@");
+                        if (directory != null) {
+                            event.addRepositorySource(new FolderRepositorySource(directory, event.getPackType(),
+                                    PackSource.BUILT_IN));
+                        }
                     }
                 }
                 """;
@@ -666,11 +918,19 @@ public final class GeneratedSourceFactory {
         return """
                 package @@PACKAGE@@.optionalpacks;
 
+                import java.io.File;
+                import java.util.List;
+
+                import net.minecraft.client.Minecraft;
+                import net.minecraft.resources.FolderPack;
+                import net.minecraft.resources.IPackNameDecorator;
+                import net.minecraft.resources.ResourcePackInfo;
+                import net.minecraftforge.api.distmarker.Dist;
                 import net.minecraftforge.eventbus.api.SubscribeEvent;
                 import net.minecraftforge.fml.common.Mod;
                 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 
-                @Mod.EventBusSubscriber(modid = "@@MODID@@", bus = Mod.EventBusSubscriber.Bus.MOD)
+                @Mod.EventBusSubscriber(modid = "@@MODID@@", bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
                 public final class OptionalPacksHook {
 
                     private OptionalPacksHook() {
@@ -678,7 +938,15 @@ public final class GeneratedSourceFactory {
 
                     @SubscribeEvent
                     public static void optionalPacksClientSetup(FMLClientSetupEvent event) {
-                        OptionalPacksRuntime.registerLegacyResourcePacks();
+                        List<File> directories = OptionalPacksRuntime.prepareLegacyPackDirectories("@@MODID@@");
+                        Minecraft minecraft = Minecraft.getInstance();
+                        minecraft.getResourcePackRepository().addPackFinder((consumer, factory) -> {
+                            for (File directory : directories) {
+                                consumer.accept(ResourcePackInfo.create("optional_packs_" + directory.getName(), false,
+                                        () -> new FolderPack(directory), factory, ResourcePackInfo.Priority.TOP,
+                                        IPackNameDecorator.BUILT_IN));
+                            }
+                        });
                     }
                 }
                 """;
@@ -712,7 +980,7 @@ public final class GeneratedSourceFactory {
                 + "\n"
                 + "    @SubscribeEvent\n"
                 + "    public static void optionalPacksAddPackFinders(AddPackFindersEvent event) {\n"
-                + "        OptionalPacksRuntime.onAddPackFinders(event);\n"
+                + "        OptionalPacksRuntime.onAddPackFinders(event, \"@@MODID@@\");\n"
                 + "    }\n"
                 + "}\n";
     }

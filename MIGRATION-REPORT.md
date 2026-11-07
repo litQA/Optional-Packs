@@ -33,21 +33,24 @@ The build listener performs all work synchronously so the files exist before Gra
 5. Adds a managed block to the generated `build.gradle`. The block excludes the source drop folders from
    `processResources` and adds the generated Java and resource roots.
 
-Forge 1.17.1 through 1.20.1 and NeoForge 1.20.1 use `AddPackFindersEvent`. The runtime locates the correct
-`FolderRepositorySource` constructor at runtime:
+Forge hooks are generated as compile-time source for each API generation. This is required because Forge production
+remaps Minecraft member names (methods and fields) while the development environment uses named mappings. Reflection
+on names such as `PackSource.BUILT_IN`, `getPackType`, or `Minecraft.getInstance` therefore worked in the MCreator
+run client but failed in an exported jar. Generated direct calls are reobfuscated by ForgeGradle together with the
+rest of the mod, so they keep working in production.
 
-* `(File, PackSource)` on Forge 1.17.1, 1.18.2, and 1.19.2.
-* `(Path, PackType, PackSource)` on Forge 1.19.4 and 1.20.1.
-* `(Path, PackType, PackSource, DirectoryValidator)` on NeoForge 1.20.4 and later.
+* Forge 1.17.1, 1.18.2, and 1.19.2 use `new FolderRepositorySource(File, PackSource.BUILT_IN)`.
+* Forge 1.19.4, Forge 1.20.1, and NeoForge 1.20.1 use
+  `new FolderRepositorySource(Path, event.getPackType(), PackSource.BUILT_IN)`.
+* NeoForge 1.20.4 and later use the runtime reflection path, because NeoForge keeps stable runtime names.
+* Forge 1.16.5 has no `AddPackFindersEvent`. Its generated hook runs at `FMLClientSetupEvent`, adds an `IPackFinder`
+  lambda to the client `ResourcePackRepository`, and creates `ResourcePackInfo` entries backed by extracted
+  `FolderPack` directories. The required `FolderPack`, `ResourcePackInfo`, and `IPackNameDecorator` references are
+  compile-time references and are reobfuscated with the mod.
 
-The `(File, PackSource)` form was the cause of the first-round failure on 1.16.5 through 1.19.2. The previous
-reflection only supplied a `Path`, so no constructor matched and no repository source was added. The current
-reflection supplies either a `Path` or its `File` equivalent.
-
-Forge 1.16.5 has no `AddPackFindersEvent`. Its generated hook runs at `FMLClientSetupEvent`, adds an `IPackFinder` to
-the client `ResourcePackRepository`, and creates `ResourcePackInfo` entries backed by `FilePack` objects. The old
-`ResourcePackInfo.create` arguments are filled by type, and reflective methods are made accessible for generated
-lambda classes. A game-directory copy remains as a fallback only when the finder path is unavailable.
+The generated runtime resolves nested mod-jar resources through `ModList`/`ModFile.findResource` first, then through
+the class code source, and finally through the class loader. This addresses production jars where class-loader
+resource lookup does not expose nested paths.
 
 No mod element, editor, menu, toolbar button, preference page, or workspace panel is registered.
 
@@ -61,15 +64,13 @@ No mod element, editor, menu, toolbar button, preference page, or workspace pane
   and collision handling executed, source archives copied unchanged, build block injected.
 * Generated runtime compiled with `--release 8` to confirm the runtime does not depend on newer Java language
   features.
-* Generated hooks compiled for every loader family against loader API stubs.
-* Real 1.17.1, 1.18.2, and 1.19.2 merged jars: `FolderRepositorySource` is constructed successfully through the
-  `(File, PackSource)` constructor.
-* Real 1.20.1 merged jar: `FolderRepositorySource` is constructed successfully through the `(Path, PackType,
-  PackSource)` constructor.
-* Stubbed 1.21.8 audit: the four-argument `FolderRepositorySource` constructor with `DirectoryValidator` is
-  constructed successfully.
-* Stubbed 1.16.5 audit: the old `IPackFinder` path creates `ResourcePackInfo` entries and accepts every normalized
-  archive, with `required=false`.
+* Direct Forge hooks compiled against the real merged jars of 1.17.1, 1.18.2, 1.19.2, 1.19.4, 1.20.1, and
+  NeoForge 1.20.1.
+* Stubbed 1.16.5 audit: the direct `FolderPack`/`ResourcePackInfo` hook compiles and uses `required=false`.
+* Reflection hook compiled for NeoForge 1.20.4 through 1.21.8.
+* Exported jar inspection: the normalized archive is present under `optional_packs/resourcepacks/`, and the generated
+  classes are present. The production failure was traced to Forge name remapping in reflection, not to a missing jar
+  resource.
 * A standalone Gradle project verified that the managed block excludes raw `resourcepacks/` and `datapacks/` while
   including generated `optional_packs/` zips.
 * Configuration cache test of the managed block: configuration cache entry stored successfully.
