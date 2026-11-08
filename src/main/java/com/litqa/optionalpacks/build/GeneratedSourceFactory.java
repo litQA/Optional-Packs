@@ -885,7 +885,7 @@ public final class GeneratedSourceFactory {
         return switch (context.target()) {
             case FORGE_LEGACY -> forgeLegacyRepositoryHook();
             case FORGE_MODERN -> forgeModernRepositoryHook();
-            case FORGE_MODERN_REFLECTIVE -> forgeModernReflectiveHook();
+            case FORGE_MODERN_REFLECTIVE -> forgeModernReflectiveHook(context.generatorName());
             case FORGE_1165 -> legacyForgeHook();
             case NEOFORGE -> neoForgeHook(context.generatorName());
             case FABRIC -> fabricHook(context.generatorName(), resourcePacks, dataPacks);
@@ -955,30 +955,37 @@ public final class GeneratedSourceFactory {
                 """;
     }
 
-    private static String forgeModernReflectiveHook() {
-        return """
-                package @@PACKAGE@@.optionalpacks;
-
-                import net.minecraftforge.event.AddPackFindersEvent;
-                import net.minecraftforge.eventbus.api.SubscribeEvent;
-                import net.minecraftforge.fml.common.Mod;
-
-                /**
-                 * Forge 1.20.4 and later use official runtime mappings, so the shared reflective
-                 * FolderRepositorySource path can be used without ForgeGradle member-name remapping.
-                 */
-                @Mod.EventBusSubscriber(modid = "@@MODID@@", bus = Mod.EventBusSubscriber.Bus.MOD)
-                public final class OptionalPacksHook {
-
-                    private OptionalPacksHook() {
-                    }
-
-                    @SubscribeEvent
-                    public static void optionalPacksAddPackFinders(AddPackFindersEvent event) {
-                        OptionalPacksRuntime.onAddPackFinders(event, "@@MODID@@");
-                    }
-                }
-                """;
+    private static String forgeModernReflectiveHook(String generatorName) {
+        boolean forge26 = generatorName != null && generatorName.startsWith("forge-26.");
+        String subscribeImport = forge26
+                ? "import net.minecraftforge.eventbus.api.listener.SubscribeEvent;"
+                : "import net.minecraftforge.eventbus.api.SubscribeEvent;";
+        String subscriberAnnotation = forge26
+                ? "@Mod.EventBusSubscriber(modid = \"@@MODID@@\")"
+                : "@Mod.EventBusSubscriber(modid = \"@@MODID@@\", bus = Mod.EventBusSubscriber.Bus.MOD)";
+        String busNote = forge26
+                ? "Forge 26.x uses the new eventbus.api.listener package and the default bus for"
+                + " AddPackFindersEvent."
+                : "Forge 1.20.4 through 1.21.1 use the legacy SubscribeEvent package and the mod bus.";
+        return "package @@PACKAGE@@.optionalpacks;\n\n"
+                + "import net.minecraftforge.event.AddPackFindersEvent;\n"
+                + subscribeImport + "\n"
+                + "import net.minecraftforge.fml.common.Mod;\n"
+                + "\n"
+                + "/**\n"
+                + " * " + busNote + "\n"
+                + " */\n"
+                + subscriberAnnotation + "\n"
+                + "public final class OptionalPacksHook {\n"
+                + "\n"
+                + "    private OptionalPacksHook() {\n"
+                + "    }\n"
+                + "\n"
+                + "    @SubscribeEvent\n"
+                + "    public static void optionalPacksAddPackFinders(AddPackFindersEvent event) {\n"
+                + "        OptionalPacksRuntime.onAddPackFinders(event, \"@@MODID@@\");\n"
+                + "    }\n"
+                + "}\n";
     }
 
     private static String legacyForgeHook() {

@@ -60,8 +60,11 @@ later have always had stable runtime names and use the same reflective path.
 * Forge 1.17.1 through 1.19.2: `new FolderRepositorySource(File, PackSource.BUILT_IN)`.
 * Forge 1.19.4, Forge 1.20.1, and NeoForge 1.20.1: `new FolderRepositorySource(Path, event.getPackType(),
   PackSource.BUILT_IN)`.
-* Forge 1.20.4+ and NeoForge 1.20.4+: `AddPackFindersEvent` plus a reflective `FolderRepositorySource` constructor
-  lookup that supports both the three-argument and the `DirectoryValidator` four-argument forms.
+* Forge 1.20.4-1.21.1 and NeoForge 1.20.4+: `AddPackFindersEvent` plus a reflective `FolderRepositorySource`
+  constructor lookup that supports both the three-argument and the `DirectoryValidator` four-argument forms.
+* Forge 26.x: `SubscribeEvent` moved to `net.minecraftforge.eventbus.api.listener`, and `AddPackFindersEvent` is
+  registered on the default bus. The hook uses the new import and `@Mod.EventBusSubscriber(modid = ...)` without the
+  legacy `bus = MOD` attribute.
 * Forge 1.16.5: a direct `IPackFinder` lambda that creates `ResourcePackInfo` entries backed by extracted `FolderPack`
   directories.
 

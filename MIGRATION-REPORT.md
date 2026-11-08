@@ -87,12 +87,20 @@ references for production, so the exported jar keeps working after leaving the d
 
 ### Forge 1.20.4 and later
 
-Forge 1.20.2 and later use official runtime mappings, so the reflective path is production-safe again. The generated
-hook uses `@Mod.EventBusSubscriber(modid = ..., bus = Mod.EventBusSubscriber.Bus.MOD)` and forwards the event to the
-shared runtime. The runtime selects the `FolderRepositorySource` constructor by parameter type, which supports both
-the three-argument form and the four-argument form with `DirectoryValidator`. If the named `PackSource.BUILT_IN`
-field is remapped, the runtime falls back to scanning public static `PackSource` fields and prefers a value whose
-string form contains `built`.
+Forge 1.20.2 and later use official runtime mappings, so the reflective path is production-safe again. The runtime
+selects the `FolderRepositorySource` constructor by parameter type, which supports both the three-argument form and
+the four-argument form with `DirectoryValidator`. If the named `PackSource.BUILT_IN` field is remapped, the runtime
+falls back to scanning public static `PackSource` fields and prefers a value whose string form contains `built`.
+
+Forge 1.20.4 through 1.21.1 keep the legacy event bus shape:
+`@Mod.EventBusSubscriber(modid = ..., bus = Mod.EventBusSubscriber.Bus.MOD)` and
+`net.minecraftforge.eventbus.api.SubscribeEvent`.
+
+Forge 26.x changed the event bus package and event hierarchy. `SubscribeEvent` is now
+`net.minecraftforge.eventbus.api.listener.SubscribeEvent`, and `AddPackFindersEvent` is a `RecordEvent` rather than
+an `IModBusEvent`. The generated hook therefore uses `@Mod.EventBusSubscriber(modid = ...)` with the default `BOTH`
+bus selection, which resolves non-mod-bus events to the default bus group. Using the legacy `bus = MOD` attribute
+would register the listener on the wrong bus.
 
 ### NeoForge 1.20.4 through 26.x
 
@@ -144,6 +152,9 @@ references and are reobfuscated with the mod.
 * Generated Fabric hooks compiled against the real development classpaths of 1.20.1, 1.21.8, 1.21.11, and 26.1.2:
   0 errors. This covered `ResourceLocation` construction, `ResourceLocation.fromNamespaceAndPath`, and
   `Identifier.fromNamespaceAndPath`.
+* Generated Forge 26.3 hook and runtime compiled against the real `forge-26.3-66.1.5` jar plus FML and eventbus
+  7.0.6: 0 errors. This covered the new `net.minecraftforge.eventbus.api.listener.SubscribeEvent` import and the
+  default-bus `@Mod.EventBusSubscriber(modid = ...)` annotation.
 * Build-handler harness for `fabric-1.21.8`, `forge-1.20.4`, and `neoforge-26.3`: drop folders created, only direct
   zips selected, names normalized, manifest and target marker written, Fabric directory trees extracted, and the
   managed build script inserted.

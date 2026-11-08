@@ -2,6 +2,29 @@
 
 All notable changes to this branch are documented in this file. Versions are listed newest first.
 
+# 1.1.4.14-beta
+
+## Changes
+
+- Forge 26.1.2, 26.2, and 26.3 now use the Forge event bus package
+  `net.minecraftforge.eventbus.api.listener.SubscribeEvent`.
+- Forge 26.x hooks use `@Mod.EventBusSubscriber(modid = ...)` with the default bus selection because
+  `AddPackFindersEvent` is a `RecordEvent`, not an `IModBusEvent`.
+- Forge 1.20.4 through 1.21.1 retain the legacy `SubscribeEvent` package and `bus = MOD` registration.
+
+## Fixes
+
+Fixed 1 bug(s).
+
+- The Forge 26.x hook imported `net.minecraftforge.eventbus.api.SubscribeEvent`, which does not exist in the Forge
+  26.3 generator. It also requested the mod bus even though `AddPackFindersEvent` is fired on the default bus. The
+  generated hook now uses the correct package and bus, so `compileJava` no longer fails.
+
+## Known Limitations
+
+- Forge 26.1.2 and 26.2 are not locally available; their hooks follow the same Forge 26.x event bus shape as 26.3.
+- Forge 1.20.4 through 1.21.1 still use the legacy event bus and have not been re-tested in this round.
+
 # 1.1.3.13-beta
 
 ## Changes
