@@ -2,6 +2,36 @@
 
 All notable changes to this branch are documented in this file. Versions are listed newest first.
 
+# 1.1.3.13-beta
+
+## Changes
+
+- Fabric hooks now call `ResourceManagerHelper.registerBuiltinResourcePack` directly instead of using runtime
+  reflection. Pack names are embedded at build time.
+- Fabric 1.20.1 uses the `ResourceLocation` constructor, 1.21.1 and 1.21.8 use
+  `ResourceLocation.fromNamespaceAndPath`, and 1.21.11 and 26.x use `Identifier.fromNamespaceAndPath`.
+- The unused Fabric reflection path was removed from the generated runtime.
+
+## Fixes
+
+Fixed 2 bug(s).
+
+- Fabric 1.20.1 and 1.21.8 worked in the development client but not in exported jars. The reflective handler looked up
+  `net.minecraft.resources.ResourceLocation` by name, which is remapped in production, and also used a class-loader
+  resource lookup for the pack manifest. The generated direct hook now registers the extracted pack directories
+  without either lookup.
+- Fabric 1.21.11 and 26.1.2 did not register packs in the development client or exported jars. The identifier class is
+  `Identifier` in those versions, not `ResourceLocation`, so the fixed reflective class name returned null. The hook
+  now uses the version-appropriate identifier type.
+
+## Known Limitations
+
+- Minecraft hides resource packs whose declared format range does not include the running game version. The tested
+  26.1.2 workspace contained a 1.20.1-format pack and must be retested with a 26.1.2-compatible pack.
+- The external 1.21.8 test instance contained two Everrose jars; only one exported jar should be installed for a
+  conclusive retest.
+- Forge 1.16.5 data packs still cannot be added to the world creation list without a coremod or mixin.
+
 # 1.1.2.12-beta
 
 ## New Content

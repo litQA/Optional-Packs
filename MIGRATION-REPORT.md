@@ -108,13 +108,20 @@ the NeoForge versions.
 ### Fabric 1.20.1 through 26.x
 
 Fabric's built-in pack API reads directories inside the mod jar. The build stage extracts each normalized archive and
-the hook registers the extracted directories with
-`ResourceManagerHelper.registerBuiltinResourcePack(ResourceLocation, String, ModContainer, boolean)` using
-`enabledByDefault = false`.
+the generated hook registers the extracted directories with
+`ResourceManagerHelper.registerBuiltinResourcePack(id, subPath, container, false)`.
 
-The call is reflective so the plugin does not need a compile-time Fabric API dependency. The overload is present in
-Fabric API 0.92.x (1.20.1), 0.116.x (1.21.1), and the 26.x releases. `ResourceLocation` construction tries
-`fromNamespaceAndPath`, `tryBuild`, the two-argument constructor, and the single-string constructor in that order.
+The call is generated as direct source rather than reflection. Loom and Fabric Loader therefore remap the Minecraft
+and Fabric API references together with the rest of the mod, which keeps the call working in exported jars. The
+identifier type is `ResourceLocation` for 1.20.1-1.21.8 and `Identifier` for 1.21.11 and later:
+
+* `fabric-1.20.1` uses `new ResourceLocation(modid, id)`.
+* `fabric-1.21.1` and `fabric-1.21.8` use `ResourceLocation.fromNamespaceAndPath(modid, id)`.
+* `fabric-1.21.11`, `fabric-26.1.2`, `fabric-26.2`, and `fabric-26.3` use
+  `Identifier.fromNamespaceAndPath(modid, id)`.
+
+The normalized pack names are embedded in the hook at build time, so registration does not depend on a class-loader
+resource lookup in production.
 
 The generated hook implements `net.fabricmc.api.ModInitializer`. Its fully qualified name is inserted into the
 generated `fabric.mod.json` `entrypoints.main` array. The insertion is a bracket-aware string operation so it does
@@ -134,14 +141,17 @@ references and are reobfuscated with the mod.
 * Generated runtime compiled with `--release 25`: 0 errors.
 * Generated Forge modern reflective hook, NeoForge 26.x-style hook, and Fabric `ModInitializer` hook compiled against
   loader API stubs: 0 errors.
+* Generated Fabric hooks compiled against the real development classpaths of 1.20.1, 1.21.8, 1.21.11, and 26.1.2:
+  0 errors. This covered `ResourceLocation` construction, `ResourceLocation.fromNamespaceAndPath`, and
+  `Identifier.fromNamespaceAndPath`.
 * Build-handler harness for `fabric-1.21.8`, `forge-1.20.4`, and `neoforge-26.3`: drop folders created, only direct
   zips selected, names normalized, manifest and target marker written, Fabric directory trees extracted, and the
   managed build script inserted.
 * Fabric `main` entrypoint injection produced valid JSON and preserved the existing main and client entrypoints.
 * Plugin package inspection: `plugin.json` at the archive root, expanded version, compiled classes, no compile-time
   libraries.
-* The generated runtime's Fabric path was checked against the Fabric API 0.92.x, 0.116.x, and 0.162.x
-  `ResourceManagerHelper` signatures; the selected four-argument boolean overload is present in all of them.
+* The generated Fabric path was checked against the Fabric API 0.92.x, 0.116.x, 0.136.x, 0.141.x, 0.155.x, and 0.162.x
+  `ResourceManagerHelper` signatures; the four-argument boolean overload is present in all of them.
 
 Workspace-level in-game verification on each target installation remains a manual test because it requires a real
 MCreator workspace, the matching Minecraft dependencies, and a graphical client.
@@ -172,11 +182,22 @@ registration on Forge 1.16.5.
 If a Forge 1.16.5 data pack must be selectable, the user can copy it into the world's `datapacks/` directory manually.
 No archive content is changed by this plugin.
 
-### Fabric pack metadata
+### Fabric pack metadata and pack format
 
 Fabric's built-in pack reader requires a root `pack.mcmeta`. An archive without it is still copied into the jar but is
 not extracted into the Fabric registration tree, and the build does not fail. Invalid `pack.mcmeta` content is left
 for Fabric to reject.
+
+Modern Minecraft also hides packs whose declared resource format range does not include the running game version. For
+example, a pack with `pack_format: 15` is not selectable in 26.1.2, whose resource format is 84. This is normal
+Minecraft behavior and is independent of the plugin; the archive is still bundled and the build succeeds. The tested
+26.1.2 workspace contained a 1.20.1-format archive, so it must be retested with a 26.1.2-compatible pack.
+
+### Duplicate mod jars during external testing
+
+The external 1.21.8 instance contained both `everrose-2.0.0-fabric-1.21.8.jar` and
+`everrose-2.0.1-fabric-1.21.8.jar`; Fabric Loader loaded the 2.0.1 jar. External retests must use only the freshly
+exported jar so the tested code is unambiguous.
 
 ### Export action and direct Gradle
 

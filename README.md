@@ -69,13 +69,14 @@ later have always had stable runtime names and use the same reflective path.
 
 Fabric Loader only starts entrypoint classes listed in `fabric.mod.json`. The plugin listens for
 `modbase/fabric.mod.json.ftl` and inserts `<package>.optionalpacks.OptionalPacksHook` into the generated `main`
-entrypoint array. The hook implements `net.fabricmc.api.ModInitializer` and calls the shared runtime.
+entrypoint array. The hook implements `net.fabricmc.api.ModInitializer`.
 
-The runtime resolves `FabricLoader`, the `ModContainer`, and `net.fabricmc.fabric.api.resource.ResourceManagerHelper`
-reflectively, then calls the version-stable
-`registerBuiltinResourcePack(ResourceLocation, String, ModContainer, boolean)` overload with `false` for the
-activation flag. That registers both a resource pack and a data pack entry for every extracted directory, and keeps
-all of them disabled by default.
+The generated hook calls the Fabric API directly, so Loom and Fabric Loader remap the Minecraft references together
+with the rest of the mod. The identifier type is `ResourceLocation` for 1.20.1-1.21.8 and `Identifier` for 1.21.11
+and later. Each extracted directory is registered with
+`ResourceManagerHelper.registerBuiltinResourcePack(id, subPath, container, false)`, which keeps every pack disabled
+by default. Pack names are embedded in the generated hook at build time, so no production class-loader resource
+lookup is required.
 
 The generated runtime resolves nested mod-jar resources through Forge/NeoForge `ModList` and `ModFile.findResource`
 first, then through the class code source, and finally through the class loader. This keeps resource lookups working

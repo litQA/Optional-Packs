@@ -38,7 +38,6 @@ public final class GeneratedSourceFactory {
             import java.util.Enumeration;
             import java.util.List;
             import java.util.Locale;
-            import java.util.Optional;
             import java.util.function.Supplier;
             import java.util.jar.JarEntry;
             import java.util.jar.JarFile;
@@ -252,110 +251,6 @@ public final class GeneratedSourceFactory {
                         }
                     } catch (Throwable throwable) {
                         LOG.log(Level.FINE, "Optional Packs could not reload the resource pack repository", throwable);
-                    }
-                }
-
-                /**
-                 * Registers the bundled packs with Fabric's built-in pack API.
-                 *
-                 * <p>Fabric resolves built-in packs as directories inside the mod jar rather than as zip archives. The
-                 * build stage writes each extracted tree below {@code optional_packs/fabric/}; this method registers
-                 * the tree through the version-stable deprecated overload that accepts an explicit sub path and a
-                 * boolean activation flag. Passing {@code false} keeps every pack disabled by default.</p>
-                 *
-                 * @param modId workspace mod id
-                 */
-                public static void registerFabricPacks(String modId) {
-                    try {
-                        Class<?> loaderClass = load("net.fabricmc.loader.api.FabricLoader");
-                        Class<?> helperClass = load("net.fabricmc.fabric.api.resource.ResourceManagerHelper");
-                        Class<?> locationClass = load("net.minecraft.resources.ResourceLocation");
-                        if (loaderClass == null || helperClass == null || locationClass == null) {
-                            LOG.warning("Optional Packs Fabric API or Minecraft classes are unavailable");
-                            return;
-                        }
-                        Object loader = loaderClass.getMethod("getInstance").invoke(null);
-                        Object containerOptional = loaderClass.getMethod("getModContainer", String.class)
-                                .invoke(loader, modId);
-                        Object container = containerOptional instanceof Optional
-                                ? ((Optional<?>) containerOptional).orElse(null)
-                                : containerOptional;
-                        if (container == null) {
-                            LOG.warning("Optional Packs could not find the Fabric mod container for " + modId);
-                            return;
-                        }
-                        Method register = findFabricRegister(helperClass);
-                        if (register == null) {
-                            LOG.warning("Optional Packs Fabric registration API is unavailable");
-                            return;
-                        }
-                        for (String[] entry : readManifest()) {
-                            boolean resource = "resourcepack".equals(entry[0]);
-                            if (!resource && !"datapack".equals(entry[0])) {
-                                continue;
-                            }
-                            String category = resource ? "resourcepacks" : "datapacks";
-                            String prefix = resource ? "r_" : "d_";
-                            String subPath = "optional_packs/fabric/" + category + "/" + entry[1];
-                            try {
-                                Object location = createResourceLocation(locationClass, modId,
-                                        "optional_packs_" + prefix + entry[1]);
-                                if (location == null) {
-                                    LOG.warning("Optional Packs could not create a Fabric pack location for "
-                                            + entry[1]);
-                                    continue;
-                                }
-                                Object registered = register.invoke(null, location, subPath, container, Boolean.FALSE);
-                                if (Boolean.FALSE.equals(registered)) {
-                                    LOG.warning("Optional Packs Fabric pack registration returned false for " + subPath);
-                                }
-                            } catch (Throwable throwable) {
-                                LOG.log(Level.WARNING,
-                                        "Optional Packs Fabric pack registration failed for " + subPath, throwable);
-                            }
-                        }
-                    } catch (Throwable throwable) {
-                        LOG.log(Level.WARNING, "Optional Packs Fabric registration failed", throwable);
-                    }
-                }
-
-                private static Method findFabricRegister(Class<?> helperClass) {
-                    for (Method method : helperClass.getMethods()) {
-                        if (!"registerBuiltinResourcePack".equals(method.getName())
-                                || method.getParameterCount() != 4) {
-                            continue;
-                        }
-                        Class<?>[] parameterTypes = method.getParameterTypes();
-                        if (parameterTypes[1] == String.class && parameterTypes[3] == boolean.class) {
-                            return method;
-                        }
-                    }
-                    return null;
-                }
-
-                private static Object createResourceLocation(Class<?> locationClass, String namespace, String path) {
-                    for (String factoryName : new String[]{"fromNamespaceAndPath", "tryBuild"}) {
-                        try {
-                            Method factory = locationClass.getMethod(factoryName, String.class, String.class);
-                            return factory.invoke(null, namespace, path);
-                        } catch (NoSuchMethodException ignored) {
-                            // Try the next construction strategy.
-                        } catch (Throwable throwable) {
-                            LOG.log(Level.FINE, "Optional Packs ResourceLocation factory failed", throwable);
-                        }
-                    }
-                    try {
-                        Constructor<?> constructor = locationClass.getConstructor(String.class, String.class);
-                        return constructor.newInstance(namespace, path);
-                    } catch (Throwable ignored) {
-                        // Fall through to the single argument constructor.
-                    }
-                    try {
-                        Constructor<?> constructor = locationClass.getConstructor(String.class);
-                        return constructor.newInstance(namespace + ":" + path);
-                    } catch (Throwable throwable) {
-                        LOG.log(Level.WARNING, "Optional Packs ResourceLocation construction failed", throwable);
-                        return null;
                     }
                 }
 
@@ -980,19 +875,20 @@ public final class GeneratedSourceFactory {
                         .replace("@@VERSION@@", context.pluginVersion()),
                 StandardCharsets.UTF_8);
         Files.writeString(packageDirectory.resolve("OptionalPacksHook.java"),
-                hookSource(context).replace("@@PACKAGE@@", context.packageName())
+                hookSource(context, resourcePacks, dataPacks).replace("@@PACKAGE@@", context.packageName())
                         .replace("@@MODID@@", context.modId()),
                 StandardCharsets.UTF_8);
     }
 
-    private static String hookSource(BuildContext context) {
+    private static String hookSource(BuildContext context, List<NormalizedPack> resourcePacks,
+                                     List<NormalizedPack> dataPacks) {
         return switch (context.target()) {
             case FORGE_LEGACY -> forgeLegacyRepositoryHook();
             case FORGE_MODERN -> forgeModernRepositoryHook();
             case FORGE_MODERN_REFLECTIVE -> forgeModernReflectiveHook();
             case FORGE_1165 -> legacyForgeHook();
             case NEOFORGE -> neoForgeHook(context.generatorName());
-            case FABRIC -> fabricHook();
+            case FABRIC -> fabricHook(context.generatorName(), resourcePacks, dataPacks);
         };
     }
 
@@ -1156,23 +1052,60 @@ public final class GeneratedSourceFactory {
                 + "}\n";
     }
 
-    private static String fabricHook() {
-        return """
-                package @@PACKAGE@@.optionalpacks;
+    private static String fabricHook(String generatorName, List<NormalizedPack> resourcePacks,
+                                     List<NormalizedPack> dataPacks) {
+        boolean legacyConstructor = "fabric-1.20.1".equals(generatorName);
+        boolean identifier = usesIdentifier(generatorName);
+        String idClass = identifier ? "Identifier" : "ResourceLocation";
+        String idImport = "import net.minecraft.resources." + idClass + ";\n";
 
-                import net.fabricmc.api.ModInitializer;
+        StringBuilder calls = new StringBuilder();
+        appendFabricPackCalls(calls, resourcePacks, "resourcepacks", "r_", idClass, legacyConstructor);
+        appendFabricPackCalls(calls, dataPacks, "datapacks", "d_", idClass, legacyConstructor);
 
-                /**
-                 * Fabric entry point. The build stage injects this class into the generated fabric.mod.json main
-                 * entrypoint array so Fabric Loader starts it before pack repositories are assembled.
-                 */
-                public final class OptionalPacksHook implements ModInitializer {
+        return "package @@PACKAGE@@.optionalpacks;\n\n"
+                + "import net.fabricmc.api.ModInitializer;\n"
+                + "import net.fabricmc.fabric.api.resource.ResourceManagerHelper;\n"
+                + "import net.fabricmc.loader.api.FabricLoader;\n"
+                + "import net.fabricmc.loader.api.ModContainer;\n"
+                + idImport
+                + "\n"
+                + "/**\n"
+                + " * Fabric entry point. The build stage injects this class into the generated fabric.mod.json main\n"
+                + " * entrypoint array so Fabric Loader starts it before pack repositories are assembled.\n"
+                + " */\n"
+                + "public final class OptionalPacksHook implements ModInitializer {\n"
+                + "\n"
+                + "    @Override\n"
+                + "    public void onInitialize() {\n"
+                + "        ModContainer container = FabricLoader.getInstance().getModContainer(\"@@MODID@@\")\n"
+                + "                .orElse(null);\n"
+                + "        if (container == null) {\n"
+                + "            return;\n"
+                + "        }\n"
+                + calls
+                + "    }\n"
+                + "\n"
+                + "    private static void register(ModContainer container, " + idClass + " id, String subPath) {\n"
+                + "        ResourceManagerHelper.registerBuiltinResourcePack(id, subPath, container, false);\n"
+                + "    }\n"
+                + "}\n";
+    }
 
-                    @Override
-                    public void onInitialize() {
-                        OptionalPacksRuntime.registerFabricPacks("@@MODID@@");
-                    }
-                }
-                """;
+    private static void appendFabricPackCalls(StringBuilder builder, List<NormalizedPack> packs, String category,
+                                              String prefix, String idClass, boolean legacyConstructor) {
+        for (NormalizedPack pack : packs) {
+            String id = "optional_packs_" + prefix + pack.name();
+            String idExpression = legacyConstructor
+                    ? "new " + idClass + "(\"@@MODID@@\", \"" + id + "\")"
+                    : idClass + ".fromNamespaceAndPath(\"@@MODID@@\", \"" + id + "\")";
+            builder.append("        register(container, ").append(idExpression).append(", \"")
+                    .append("optional_packs/fabric/").append(category).append('/').append(pack.name())
+                    .append("\");\n");
+        }
+    }
+
+    private static boolean usesIdentifier(String generatorName) {
+        return "fabric-1.21.11".equals(generatorName) || generatorName.startsWith("fabric-26.");
     }
 }
