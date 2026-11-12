@@ -41,6 +41,10 @@ from the current source drop folders.
 A short preparation timestamp prevents the template event and the following build event from processing the same
 workspace twice.
 
+If neither drop folder yields a copied zip, the generated `.optional_packs` tree is removed and no loader hook,
+`packs.txt`, or version marker is emitted. The managed `build.gradle` block remains so non-zip files placed in the drop
+folders are still excluded from the mod jar.
+
 Forge hooks are generated as compile-time source for each API generation. ForgeGradle/NeoGradle reobfuscates the
 Minecraft references for production, so the exported jar keeps working after leaving the development environment.
 Reflection is used only by NeoForge 1.20.4 and later, where the runtime names are stable.

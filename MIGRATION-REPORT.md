@@ -46,6 +46,10 @@ Each preparation:
 6. Writes `optional_packs/version.txt` and `OptionalPacksRuntime.VERSION`.
 7. Adds a managed block to the generated `build.gradle`.
 
+If neither source folder yields a copied zip, the generated `.optional_packs` tree is removed and no hook, manifest,
+or version resource is emitted. The managed build script block remains so non-zip entries in the drop folders are not
+packaged into the mod jar. This also removes any stale generated tree from a previous build.
+
 The cleanup removes `.optional_packs`, every `build/classes/java/main/**/optionalpacks` directory,
 `build/resources/main/optional_packs`, old derived Fabric resource directories, `build/libs`, and `build/tmp/jar`.
 This covers generator conversion and stale export output without deleting `.gradle` caches or the whole build tree.

@@ -70,6 +70,15 @@ public final class OptionalPacksBuildHandler {
         List<NormalizedPack> resourcePacks = copyPacks(resourceSource, generatedResourcePacks);
         List<NormalizedPack> dataPacks = copyPacks(dataSource, generatedDataPacks);
 
+        if (resourcePacks.isEmpty() && dataPacks.isEmpty()) {
+            // Keep the source drop folders out of the mod jar, but do not emit any plugin classes or resources.
+            deleteRecursively(context.workspace().resolve(".optional_packs"));
+            BuildScriptInjector.inject(context.workspace().resolve("build.gradle"));
+            LOG.info("Optional Packs found no zip files for " + context.generatorName()
+                    + "; no optional pack code was generated");
+            return;
+        }
+
         writeManifest(generatedResources, resourcePacks, dataPacks);
         writeVersionMarker(generatedResources, context);
         GeneratedSourceFactory.write(context, resourcePacks, dataPacks);

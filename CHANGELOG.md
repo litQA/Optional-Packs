@@ -2,6 +2,23 @@
 
 All notable changes to this branch are documented in this file. Versions are listed newest first.
 
+# 1.2.0.8-beta
+
+## Changes
+
+- When neither source drop folder contains a zip, no optional pack classes, manifests, or version resources are
+  generated. The managed `build.gradle` block is still injected so non-zip files in the drop folders are not packaged.
+- Stale plugin classes, resources, and jars are still removed before this no-pack decision, so a workspace that previously
+  had packs is cleaned correctly.
+- Version metadata was advanced to minor version 2, patch 0, with the existing build number retained.
+
+## Known Limitations
+
+- Forge 1.16.5 data packs are still bundled but cannot be added to the world creation data pack list without a
+  coremod or mixin. See [MIGRATION-REPORT.md](MIGRATION-REPORT.md).
+- Pack contents are not validated, repaired, or rewritten. Invalid structures are left for the loader to skip.
+- Cleanup deletes `build/libs`; if the game holds an old jar open on Windows, close the game and retry.
+
 # 1.1.1.8
 
 ## Changes
