@@ -116,6 +116,11 @@ public final class Launcher extends JavaPlugin {
         if (generatorName == null || !generatorName.startsWith(FABRIC_GENERATOR_PREFIX)) {
             return;
         }
+        Path workspaceFolder = workspace.getFolderManager().getWorkspaceFolder().toPath();
+        if (!OptionalPacksBuildHandler.hasAnyZip(workspaceFolder)) {
+            // No generated hook class exists, so adding the entrypoint would only create a broken reference.
+            return;
+        }
 
         String packageName = workspace.getWorkspaceSettings().getModElementsPackage();
         if (packageName == null || packageName.isBlank()) {
@@ -241,8 +246,9 @@ public final class Launcher extends JavaPlugin {
                 packageName,
                 pluginVersion(),
                 OptionalPacksBuildHandler.targetFor(generatorName));
-        OptionalPacksBuildHandler.handle(context);
-        LOG.info("Optional Packs prepared " + generatorName + " via " + trigger);
+        boolean generated = OptionalPacksBuildHandler.handle(context);
+        LOG.info("Optional Packs processed " + generatorName + " via " + trigger
+                + (generated ? " with generated pack code" : " without generated pack code"));
         return true;
     }
 

@@ -74,6 +74,14 @@ This covers generator conversion and stale export output without deleting `.grad
 A short in-memory preparation timestamp prevents the template event and the immediately following build event from
 processing the same workspace twice.
 
+### No-pack builds
+
+If neither drop folder contains a direct zip archive, preparation stops after creating the two empty drop folders.
+The generated `.optional_packs` tree, plugin-owned build outputs, and the managed `build.gradle` block are removed.
+No runtime, hook, manifest, version marker, or Fabric entrypoint is generated, so a jar built after removing all
+packs contains no optional pack classes or resources. At least one direct zip in either folder enables the normal
+generation path.
+
 ## Loader hook design
 
 ### Forge 1.17.1 through 1.20.1
@@ -158,6 +166,9 @@ references and are reobfuscated with the mod.
 * Build-handler harness for `fabric-1.21.8`, `forge-1.20.4`, and `neoforge-26.3`: drop folders created, only direct
   zips selected, names normalized, manifest and target marker written, Fabric directory trees extracted, and the
   managed build script inserted.
+* No-zip harness: non-zip files and nested zips generated no code; one direct zip generated code, resources, and the
+  managed block; removing all direct zips removed `.optional_packs`, stale optionalpack classes/resources,
+  `build/libs`, and the managed block.
 * Fabric `main` entrypoint injection produced valid JSON and preserved the existing main and client entrypoints.
 * Plugin package inspection: `plugin.json` at the archive root, expanded version, compiled classes, no compile-time
   libraries.

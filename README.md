@@ -37,15 +37,18 @@ from the current source drop folders.
 
 1. It creates `src/main/resources/resourcepacks/` and `src/main/resources/datapacks/` when they are missing.
 2. It scans only direct `.zip` files in those folders. Folders, non-zip files, and nested files are ignored.
-3. It normalizes every detected file name to lowercase ASCII letters, digits, underscores, and dots, collapsing
+3. If neither folder contains a direct `.zip`, it removes `.optional_packs`, plugin-owned build outputs, and the
+   managed `build.gradle` block, and generates no runtime, hook, manifest, or version marker. The two empty drop
+   folders remain available for the next build.
+4. It normalizes every detected file name to lowercase ASCII letters, digits, underscores, and dots, collapsing
    repeated underscores and adding `_2`, `_3`, ... for collisions.
-4. It copies the untouched archives to `.optional_packs/generated/resources/optional_packs/`.
-5. For Fabric it also extracts each archive into
+5. It copies the untouched archives to `.optional_packs/generated/resources/optional_packs/`.
+6. For Fabric it also extracts each archive into
    `.optional_packs/generated/resources/optional_packs/fabric/{resourcepacks,datapacks}/<name>/`, because Fabric's
    built-in pack API reads directories rather than archives.
-6. It writes a loader-specific hook and a shared reflection runtime to `.optional_packs/generated/java/`.
-7. It writes `optional_packs/version.txt` and a `VERSION` constant into the generated runtime for traceability.
-8. It appends a managed block to the generated `build.gradle` so the generated sources and resources are compiled and
+7. It writes a loader-specific hook and a shared reflection runtime to `.optional_packs/generated/java/`.
+8. It writes `optional_packs/version.txt` and a `VERSION` constant into the generated runtime for traceability.
+9. It appends a managed block to the generated `build.gradle` so the generated sources and resources are compiled and
    included in the mod jar, while the source drop folders are excluded from the jar.
 
 A short preparation timestamp prevents the template event and the following build event from processing the same

@@ -66,10 +66,15 @@ public final class OptionalPacksBuildHandler {
     /**
      * Prepares a workspace for a build.
      *
+     * <p>If neither drop folder contains a zip archive, no runtime, hook, manifest, or version marker is generated.
+     * The previously generated tree, plugin-owned build outputs, and managed build script block are removed so a jar
+     * built after removing all packs does not retain optional pack code or resources.</p>
+     *
      * @param context workspace and generator information
+     * @return {@code true} when at least one archive was found and generated code was written
      * @throws IOException when the generated tree or build script cannot be written
      */
-    public static void handle(BuildContext context) throws IOException {
+    public static boolean handle(BuildContext context) throws IOException {
         // The export action calls generateBase() and Gradle without firing WorkspaceBuildStartedEvent. The template
         // event calls this method before Gradle; stale plugin state and plugin-owned build outputs are removed first.
         deleteRecursively(context.workspace().resolve(".optional_packs"));
@@ -81,14 +86,25 @@ public final class OptionalPacksBuildHandler {
         Files.createDirectories(resourceSource);
         Files.createDirectories(dataSource);
 
+        List<Path> resourceCandidates = listZipFiles(resourceSource);
+        List<Path> dataCandidates = listZipFiles(dataSource);
+        if (resourceCandidates.isEmpty() && dataCandidates.isEmpty()) {
+            // Keep the two user-facing drop folders, but remove every plugin-owned generated artifact and the
+            // managed build script block. A later Gradle build therefore produces no optional pack classes/resources.
+            BuildScriptInjector.remove(context.workspace().resolve("build.gradle"));
+            LOG.info("Optional Packs found no zip archives for " + context.generatorName()
+                    + "; skipped code generation");
+            return false;
+        }
+
         Path generatedResources = context.generatedResourcesRoot();
         Path generatedResourcePacks = generatedResources.resolve("optional_packs").resolve(RESOURCE_FOLDER);
         Path generatedDataPacks = generatedResources.resolve("optional_packs").resolve(DATA_FOLDER);
         Files.createDirectories(generatedResourcePacks);
         Files.createDirectories(generatedDataPacks);
 
-        List<NormalizedPack> resourcePacks = copyPacks(resourceSource, generatedResourcePacks);
-        List<NormalizedPack> dataPacks = copyPacks(dataSource, generatedDataPacks);
+        List<NormalizedPack> resourcePacks = copyPacks(resourceCandidates, generatedResourcePacks);
+        List<NormalizedPack> dataPacks = copyPacks(dataCandidates, generatedDataPacks);
 
         if (context.target() == BuildContext.Target.FABRIC) {
             // Fabric's built-in pack API reads directories inside the mod jar, not arbitrary zip archives.
@@ -103,6 +119,19 @@ public final class OptionalPacksBuildHandler {
 
         LOG.info("Optional Packs prepared " + resourcePacks.size() + " resource pack(s) and "
                 + dataPacks.size() + " data pack(s) for " + context.generatorName());
+        return true;
+    }
+
+    /**
+     * Returns whether either drop folder currently contains at least one direct zip archive.
+     *
+     * @param workspace workspace root
+     * @return {@code true} when at least one zip archive is present
+     */
+    public static boolean hasAnyZip(Path workspace) {
+        Path resources = workspace.resolve("src").resolve("main").resolve("resources");
+        return !listZipFiles(resources.resolve(RESOURCE_FOLDER)).isEmpty()
+                || !listZipFiles(resources.resolve(DATA_FOLDER)).isEmpty();
     }
 
     /**
@@ -161,8 +190,11 @@ public final class OptionalPacksBuildHandler {
         throw new IllegalArgumentException("Unsupported generator: " + generatorName);
     }
 
-    private static List<NormalizedPack> copyPacks(Path sourceDirectory, Path destinationDirectory) throws IOException {
+    private static List<Path> listZipFiles(Path sourceDirectory) {
         List<Path> candidates = new ArrayList<>();
+        if (!Files.isDirectory(sourceDirectory)) {
+            return candidates;
+        }
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(sourceDirectory)) {
             for (Path path : stream) {
                 if (Files.isRegularFile(path)
@@ -170,9 +202,15 @@ public final class OptionalPacksBuildHandler {
                     candidates.add(path);
                 }
             }
+        } catch (IOException exception) {
+            LOG.log(Level.WARNING, "Could not scan optional pack folder " + sourceDirectory, exception);
         }
         candidates.sort(Comparator.comparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER));
+        return candidates;
+    }
 
+    private static List<NormalizedPack> copyPacks(List<Path> candidates, Path destinationDirectory)
+            throws IOException {
         List<NormalizedPack> result = new ArrayList<>();
         Set<String> usedNames = new HashSet<>();
         for (Path source : candidates) {

@@ -2,6 +2,31 @@
 
 All notable changes to this branch are documented in this file. Versions are listed newest first.
 
+# 1.2.0.15-beta
+
+## Changes
+
+- Minor version increased to 2; patch reset to 0; build number continues incrementing.
+- Build-time generation now requires at least one direct zip in `resourcepacks/` or `datapacks/`.
+- With no direct zip, the plugin removes `.optional_packs`, plugin-owned build outputs, and the managed
+  `build.gradle` block, and writes no runtime, hook, manifest, or version marker.
+- Fabric `fabric.mod.json` entrypoint injection is skipped when no direct zip exists.
+- The two empty drop folders are still created for the next build.
+
+## Fixes
+
+Fixed 1 bug(s).
+
+- Exported jars contained optional pack classes and resources even when both drop folders were empty. The generation
+  path is now gated on the presence of at least one direct zip, and stale generated code and build outputs are
+  removed when the last zip is deleted.
+
+## Known Limitations
+
+- Removing all zips intentionally deletes `build/libs`; close a running game before rebuilding if Windows holds the
+  old jar open.
+- Pack contents are not validated, repaired, or rewritten.
+
 # 1.1.4.14-beta
 
 ## Changes
